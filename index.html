@@ -11,12 +11,12 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #2c3e50; font-family: sans-serif; touch-action: none; user-select: none; overscroll-behavior: none; }
-        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; text-shadow: 1px 1px 3px rgba(0,0,0,0.8); }
-        #message { font-size: 24px; font-weight: bold; margin-bottom: 20px; text-align: center; white-space: pre-wrap; line-height: 1.4; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding-bottom: 50px; box-sizing: border-box; }
+        #message { font-size: 20px; font-weight: bold; margin-bottom: 20px; text-align: center; white-space: pre-wrap; line-height: 1.5; background: rgba(255, 255, 255, 0.9); padding: 15px 25px; border-radius: 12px; color: #2c3e50; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 90%; }
         #debug-panel { position: absolute; top: 10px; left: 10px; font-size: 14px; font-family: monospace; color: #00ff00; text-align: left; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; }
-        #btn-retry { pointer-events: auto; padding: 12px 24px; font-size: 18px; font-weight: bold; background-color: #e74c3c; color: white; border: none; border-radius: 8px; cursor: pointer; display: none; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        #btn-retry { pointer-events: auto; padding: 12px 30px; font-size: 18px; font-weight: bold; background-color: #e74c3c; color: white; border: none; border-radius: 8px; cursor: pointer; display: none; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.1s; }
         #btn-retry:active { transform: translateY(2px); box-shadow: 0 2px 3px rgba(0,0,0,0.3); }
-        canvas { display: block; width: 100%; height: 100%; }
+        canvas { display: block; width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: -1; }
     </style>
 </head>
 <body>
@@ -28,16 +28,12 @@
     </div>
 
     <script>
-        // 서비스 워커 등록
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./sw.js')
-                    .then(reg => console.log('ServiceWorker registered!', reg.scope))
-                    .catch(err => console.log('ServiceWorker registration failed: ', err));
+                navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW registration failed: ', err));
             });
         }
 
-        // --- 2. SplitMathEngine (코어 판정 알고리즘) ---
         const SplitMathEngine = {
             evaluate: function(leftInput, rightInput) {
                 const dxL = leftInput.x1 - leftInput.x0;
@@ -61,7 +57,7 @@
                     return { isValid: false, message: "너무 살살 당겼습니다.\n다시 시도하세요." };
                 }
                 
-                const D_max = 220, V_max = 1.8;
+                const D_max = 150, V_max = 2.0; // 당기는 요구 거리(D_max) 축소로 모바일 편의성 증가
                 let brokenSide = 'NONE';
                 const leftBroken = (dL > D_max || vL > V_max);
                 const rightBroken = (dR > D_max || vR > V_max);
@@ -104,58 +100,44 @@
             }
         };
 
-        // --- 3. GameStateStore (상태 머신) ---
         class GameStateStore {
             constructor() {
-                this.state = {
-                    phase: 'IDLE', leftSpreadAngle: 0.0, rightSpreadAngle: 0.0,
-                    crackProgress: 0.0, stressLevel: 0.0,
-                    leftTouchPos: null, rightTouchPos: null, result: null
-                };
+                this.state = { phase: 'IDLE', leftSpreadAngle: 0.0, rightSpreadAngle: 0.0, crackProgress: 0.0, stressLevel: 0.0, leftTouchPos: null, rightTouchPos: null, result: null };
                 this.listeners = [];
             }
             subscribe(listener) { this.listeners.push(listener); }
-            update(newState) {
-                this.state = { ...this.state, ...newState };
-                this.notify();
-            }
+            update(newState) { this.state = { ...this.state, ...newState }; this.notify(); }
             notify() { this.listeners.forEach(l => l(this.state)); }
-            reset() {
-                this.update({
-                    phase: 'IDLE', leftSpreadAngle: 0.0, rightSpreadAngle: 0.0,
-                    crackProgress: 0.0, stressLevel: 0.0,
-                    leftTouchPos: null, rightTouchPos: null, result: null
-                });
-            }
+            reset() { this.update({ phase: 'IDLE', leftSpreadAngle: 0.0, rightSpreadAngle: 0.0, crackProgress: 0.0, stressLevel: 0.0, leftTouchPos: null, rightTouchPos: null, result: null }); }
         }
 
         const store = new GameStateStore();
 
-        // --- 1. InputController (터치 입력 및 제스처) ---
         class InputController {
             constructor(store) {
                 this.store = store;
                 this.inputs = { left: null, right: null };
-                this.midX = window.innerWidth / 2;
-                this.midY = window.innerHeight / 2;
                 
-                window.addEventListener('resize', () => { 
-                    this.midX = window.innerWidth / 2; 
-                    this.midY = window.innerHeight / 2;
-                });
+                this.updateDimensions();
+                window.addEventListener('resize', this.updateDimensions.bind(this));
+                
                 const canvas = document.getElementById('gameCanvas');
-                
                 canvas.addEventListener('touchstart', this.onTouchStart.bind(this), { passive: false });
                 canvas.addEventListener('touchmove', this.onTouchMove.bind(this), { passive: false });
                 canvas.addEventListener('touchend', this.onTouchEnd.bind(this), { passive: false });
                 canvas.addEventListener('touchcancel', this.onTouchEnd.bind(this), { passive: false });
             }
             
+            updateDimensions() {
+                this.midX = window.innerWidth / 2;
+                this.cy = window.innerHeight / 2 - 80; // 아이스크림 렌더링 중심축 (상향 조정)
+            }
+            
             onTouchStart(e) {
                 e.preventDefault();
                 if (this.store.state.phase === 'RESULT' || this.store.state.phase === 'RESOLVE') return;
                 
-                const stickStartY = this.midY + 50; 
+                const stickStartY = this.cy + 50; // 나무 막대 영역 시작점 동기화
                 
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     const t = e.changedTouches[i];
@@ -167,25 +149,16 @@
                     
                     const isLeft = t.clientX < this.midX;
                     const inputObj = {
-                        id: t.identifier,
-                        x0: t.clientX, y0: t.clientY,
-                        x1: t.clientX, y1: t.clientY,
-                        t0: performance.now(), t1: performance.now(),
-                        max_d: 0 
+                        id: t.identifier, x0: t.clientX, y0: t.clientY, x1: t.clientX, y1: t.clientY,
+                        t0: performance.now(), t1: performance.now(), max_d: 0 
                     };
                     
                     if (isLeft) {
                         if (!this.inputs.left) this.inputs.left = inputObj;
-                        else {
-                            this.triggerAbnormalEnd("영역 침범!\n좌/우 막대를 각각 하나씩 잡으세요.");
-                            return;
-                        }
+                        else { this.triggerAbnormalEnd("영역 침범!\n좌/우 막대를 각각 하나씩 잡으세요."); return; }
                     } else {
                         if (!this.inputs.right) this.inputs.right = inputObj;
-                        else {
-                            this.triggerAbnormalEnd("영역 침범!\n좌/우 막대를 각각 하나씩 잡으세요.");
-                            return;
-                        }
+                        else { this.triggerAbnormalEnd("영역 침범!\n좌/우 막대를 각각 하나씩 잡으세요."); return; }
                     }
                 }
                 
@@ -202,10 +175,7 @@
                 e.preventDefault();
                 if (this.store.state.phase !== 'READY' && this.store.state.phase !== 'SWIPING') return;
                 
-                let moved = false;
-                let realtimeSnap = false; 
-                let tensionLoss = false;  
-                let crossCenter = false;  
+                let moved = false, realtimeSnap = false, tensionLoss = false, crossCenter = false;
                 const now = performance.now();
                 
                 for (let i = 0; i < e.changedTouches.length; i++) {
@@ -213,38 +183,21 @@
                     
                     if (this.inputs.left && t.identifier === this.inputs.left.id) {
                         if (t.clientX >= this.midX) crossCenter = true;
-                        
                         const curr_d = Math.hypot(t.clientX - this.inputs.left.x0, t.clientY - this.inputs.left.y0);
                         if (curr_d > this.inputs.left.max_d) {
-                            this.inputs.left.max_d = curr_d;
-                            this.inputs.left.x1 = t.clientX;
-                            this.inputs.left.y1 = t.clientY;
-                            this.inputs.left.t1 = now;
-                            moved = true;
-                        } else if (this.inputs.left.max_d - curr_d > 15) {
-                            tensionLoss = true;
-                        }
+                            this.inputs.left.max_d = curr_d; this.inputs.left.x1 = t.clientX; this.inputs.left.y1 = t.clientY; this.inputs.left.t1 = now; moved = true;
+                        } else if (this.inputs.left.max_d - curr_d > 15) tensionLoss = true;
                     }
                     if (this.inputs.right && t.identifier === this.inputs.right.id) {
                         if (t.clientX < this.midX) crossCenter = true;
-                        
                         const curr_d = Math.hypot(t.clientX - this.inputs.right.x0, t.clientY - this.inputs.right.y0);
                         if (curr_d > this.inputs.right.max_d) {
-                            this.inputs.right.max_d = curr_d;
-                            this.inputs.right.x1 = t.clientX;
-                            this.inputs.right.y1 = t.clientY;
-                            this.inputs.right.t1 = now;
-                            moved = true;
-                        } else if (this.inputs.right.max_d - curr_d > 15) {
-                            tensionLoss = true;
-                        }
+                            this.inputs.right.max_d = curr_d; this.inputs.right.x1 = t.clientX; this.inputs.right.y1 = t.clientY; this.inputs.right.t1 = now; moved = true;
+                        } else if (this.inputs.right.max_d - curr_d > 15) tensionLoss = true;
                     }
                 }
                 
-                if (crossCenter) {
-                    this.triggerAbnormalEnd("영역 침범!\n서로 바깥쪽으로 당겨주세요.");
-                    return;
-                }
+                if (crossCenter) { this.triggerAbnormalEnd("영역 침범!\n서로 바깥쪽으로 당겨주세요."); return; }
                 
                 if (moved || tensionLoss) {
                     const dL = this.inputs.left ? this.inputs.left.max_d : 0;
@@ -254,28 +207,21 @@
                     if (this.inputs.left) vL = dL / Math.max(1, this.inputs.left.t1 - this.inputs.left.t0);
                     if (this.inputs.right) vR = dR / Math.max(1, this.inputs.right.t1 - this.inputs.right.t0);
                     
-                    const D_max = 220, V_max = 1.8;
-                    if (dL > D_max || dR > D_max || vL > V_max || vR > V_max) {
-                        realtimeSnap = true;
-                    }
+                    const D_max = 150, V_max = 2.0;
+                    if (dL > D_max || dR > D_max || vL > V_max || vR > V_max) realtimeSnap = true;
                     
                     const lAngle = (dL / D_max) * (Math.PI / 8); 
                     const rAngle = (dR / D_max) * (Math.PI / 8);
-                    
                     const stress = Math.min(1.0, Math.max(dL, dR) / D_max);
                     
                     this.store.update({
                         phase: 'SWIPING',
                         leftTouchPos: this.inputs.left ? { x: this.inputs.left.x1, y: this.inputs.left.y1 } : null,
                         rightTouchPos: this.inputs.right ? { x: this.inputs.right.x1, y: this.inputs.right.y1 } : null,
-                        stressLevel: stress,
-                        leftSpreadAngle: lAngle,
-                        rightSpreadAngle: rAngle
+                        stressLevel: stress, leftSpreadAngle: lAngle, rightSpreadAngle: rAngle
                     });
                     
-                    if (realtimeSnap || tensionLoss) {
-                        this.triggerResolve();
-                    }
+                    if (realtimeSnap || tensionLoss) this.triggerResolve();
                 }
             }
             
@@ -289,7 +235,6 @@
                     if (this.inputs.left && t.identifier === this.inputs.left.id) shouldResolve = true;
                     if (this.inputs.right && t.identifier === this.inputs.right.id) shouldResolve = true;
                 }
-                
                 if (shouldResolve) this.triggerResolve();
             }
             
@@ -312,23 +257,17 @@
             }
         }
 
-        // --- 4. RendererAdapter (뷰 계층) ---
         class RendererAdapter {
             constructor(store) {
                 this.canvas = document.getElementById('gameCanvas');
                 this.ctx = this.canvas.getContext('2d');
                 this.store = store;
                 
-                this.ui = {
-                    msg: document.getElementById('message'),
-                    btn: document.getElementById('btn-retry'),
-                    debug: document.getElementById('debug-panel')
-                };
+                this.ui = { msg: document.getElementById('message'), btn: document.getElementById('btn-retry'), debug: document.getElementById('debug-panel') };
                 
                 this.resize();
                 window.addEventListener('resize', this.resize.bind(this));
                 this.ui.btn.addEventListener('click', () => this.store.reset());
-                
                 this.store.subscribe(this.render.bind(this));
                 this.render(this.store.state);
             }
@@ -340,8 +279,7 @@
             }
             
             render(state) {
-                const w = this.canvas.width;
-                const h = this.canvas.height;
+                const w = this.canvas.width, h = this.canvas.height;
                 const ctx = this.ctx;
                 
                 ctx.fillStyle = '#fce4ec'; 
@@ -349,7 +287,7 @@
                 this.updateUI(state);
                 
                 const cx = w / 2;
-                const cy = h / 2;
+                const cy = h / 2 - 80; // 렌더링 위치를 위로 80px 이동
                 const bW = 120, bH = 260;
                 const stickW = 20, stickH = 100;
                 
@@ -358,9 +296,7 @@
                 
                 const drawHalf = (isLeft, angle, ratio, isBroken = false) => {
                     ctx.save();
-                    // 상단 중앙을 피벗으로 설정하여 위는 붙어있고 아래부터 갈라지게 수정
                     ctx.translate(0, -bH / 2);
-                    // 회전 방향 반전: 왼쪽은 시계방향, 오른쪽은 반시계방향으로 뻗어나감
                     ctx.rotate(isLeft ? angle : -angle);
                     ctx.translate(0, bH / 2);
                     
@@ -373,7 +309,6 @@
                     
                     ctx.fillStyle = isBroken ? '#c0392b' : '#3e2723'; 
                     ctx.beginPath();
-                    
                     if (typeof ctx.roundRect === 'function') {
                         if (isLeft) ctx.roundRect(startX, -bH/2, rw, bH, [30, 0, 0, 0]);
                         else ctx.roundRect(startX, -bH/2, rw, bH, [0, 30, 0, 0]);
@@ -382,12 +317,7 @@
                     }
                     ctx.fill();
                     
-                    if (state.phase === 'RESULT' && !isBroken) {
-                        ctx.fillStyle = '#fff'; 
-                        ctx.font = 'bold 22px sans-serif'; 
-                        ctx.textAlign = 'center';
-                        ctx.fillText(ratio.toFixed(2) + '%', startX + rw/2, 0);
-                    }
+                    // 캔버스 내의 중복 텍스트(퍼센트 표기) 제거
                     ctx.restore();
                 };
 
@@ -427,13 +357,11 @@
             }
             
             updateUI(state) {
-                this.ui.msg.style.color = '#2c3e50'; 
-                this.ui.msg.style.textShadow = 'none';
-                
                 if (state.phase === 'IDLE') {
                     this.ui.msg.textContent = "아래쪽 나무 막대를 각각 잡으세요\n(초콜릿 부분 터치 금지)";
                     this.ui.btn.style.display = 'none';
                     this.ui.debug.textContent = '';
+                    this.ui.msg.style.color = '#2c3e50';
                 } else if (state.phase === 'READY') {
                     this.ui.msg.textContent = "바깥쪽으로 당기세요!";
                 } else if (state.phase === 'SWIPING') {
@@ -446,7 +374,8 @@
                         this.ui.msg.textContent = `[실패] 막대가 부러졌습니다!\n(너무 세게 당김)`;
                         this.ui.msg.style.color = '#c0392b';
                     } else {
-                        this.ui.msg.textContent = `[성공] 종합 점수: ${state.result.symmetryScore}점\n${state.result.leftRatio}% : ${state.result.rightRatio}%`;
+                        this.ui.msg.textContent = `[성공] 정확도 점수: ${state.result.symmetryScore}점\n왼쪽 ${state.result.leftRatio}% : 오른쪽 ${state.result.rightRatio}%`;
+                        this.ui.msg.style.color = '#2c3e50';
                     }
                     
                     const m = state.result.metrics;
