@@ -23,7 +23,7 @@
     <canvas id="gameCanvas"></canvas>
     <div id="ui-layer">
         <div id="debug-panel"></div>
-        <div id="message">양손으로 막대를 잡으세요\n(화면 좌/우 터치)</div>
+        <div id="message">아래쪽 나무 막대를 각각 잡으세요\n(초콜릿 부분 터치 금지)</div>
         <button id="btn-retry">다시 하기</button>
     </div>
 
@@ -137,8 +137,12 @@
                 this.store = store;
                 this.inputs = { left: null, right: null };
                 this.midX = window.innerWidth / 2;
+                this.midY = window.innerHeight / 2;
                 
-                window.addEventListener('resize', () => { this.midX = window.innerWidth / 2; });
+                window.addEventListener('resize', () => { 
+                    this.midX = window.innerWidth / 2; 
+                    this.midY = window.innerHeight / 2;
+                });
                 const canvas = document.getElementById('gameCanvas');
                 
                 canvas.addEventListener('touchstart', this.onTouchStart.bind(this), { passive: false });
@@ -149,40 +153,43 @@
             
             onTouchStart(e) {
                 e.preventDefault();
-                // 결과 표시 중이거나 에러 메시지를 띄우는 중(RESOLVE)이면 새 터치 무시
                 if (this.store.state.phase === 'RESULT' || this.store.state.phase === 'RESOLVE') return;
+                
+                // 룰 3: 나무 막대기 영역 판단 기준 (화면 중앙에서 50px 아래부터 막대로 간주)
+                const stickStartY = this.midY + 50; 
                 
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     const t = e.changedTouches[i];
+                    
+                    if (t.clientY < stickStartY) {
+                        this.triggerAbnormalEnd("초콜릿이 묻습니다!\n아래쪽 나무 막대를 잡으세요.");
+                        return;
+                    }
+                    
                     const isLeft = t.clientX < this.midX;
                     const inputObj = {
                         id: t.identifier,
                         x0: t.clientX, y0: t.clientY,
                         x1: t.clientX, y1: t.clientY,
                         t0: performance.now(), t1: performance.now(),
-                        max_d: 0 // 최대 이동 거리 추적용
+                        max_d: 0 
                     };
                     
                     if (isLeft) {
-                        if (!this.inputs.left) {
-                            this.inputs.left = inputObj;
-                        } else {
-                            // 이미 왼쪽에 손가락이 있는데 또 왼쪽을 터치한 경우
-                            this.triggerAbnormalEnd("영역 침범!\n좌/우 영역을 각각 하나씩 잡으세요.");
+                        if (!this.inputs.left) this.inputs.left = inputObj;
+                        else {
+                            this.triggerAbnormalEnd("영역 침범!\n좌/우 막대를 각각 하나씩 잡으세요.");
                             return;
                         }
                     } else {
-                        if (!this.inputs.right) {
-                            this.inputs.right = inputObj;
-                        } else {
-                            // 이미 오른쪽에 손가락이 있는데 또 오른쪽을 터치한 경우
-                            this.triggerAbnormalEnd("영역 침범!\n좌/우 영역을 각각 하나씩 잡으세요.");
+                        if (!this.inputs.right) this.inputs.right = inputObj;
+                        else {
+                            this.triggerAbnormalEnd("영역 침범!\n좌/우 막대를 각각 하나씩 잡으세요.");
                             return;
                         }
                     }
                 }
                 
-                // 양쪽 영역 터치가 정상적으로 감지되었을 때만 READY 상태로 진입
                 if (this.inputs.left && this.inputs.right && this.store.state.phase === 'IDLE') {
                     this.store.update({
                         phase: 'READY',
@@ -198,15 +205,14 @@
                 
                 let moved = false;
                 let realtimeSnap = false; 
-                let tensionLoss = false;  // 장력 상실 플래그
-                let crossCenter = false;  // 영역 침범 플래그
+                let tensionLoss = false;  
+                let crossCenter = false;  
                 const now = performance.now();
                 
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     const t = e.changedTouches[i];
                     
                     if (this.inputs.left && t.identifier === this.inputs.left.id) {
-                        // 중앙선 우측으로 침범했는지 검사
                         if (t.clientX >= this.midX) crossCenter = true;
                         
                         const curr_d = Math.hypot(t.clientX - this.inputs.left.x0, t.clientY - this.inputs.left.y0);
@@ -217,12 +223,10 @@
                             this.inputs.left.t1 = now;
                             moved = true;
                         } else if (this.inputs.left.max_d - curr_d > 15) {
-                            // 최대 당긴 거리에서 15px 이상 안으로 밀리면 장력 상실
                             tensionLoss = true;
                         }
                     }
                     if (this.inputs.right && t.identifier === this.inputs.right.id) {
-                        // 중앙선 좌측으로 침범했는지 검사
                         if (t.clientX < this.midX) crossCenter = true;
                         
                         const curr_d = Math.hypot(t.clientX - this.inputs.right.x0, t.clientY - this.inputs.right.y0);
@@ -238,9 +242,8 @@
                     }
                 }
                 
-                // 영역 침범 시 즉시 무효 처리
                 if (crossCenter) {
-                    this.triggerAbnormalEnd("영역 침범!\n각자의 영역에서 밖으로 당겨주세요.");
+                    this.triggerAbnormalEnd("영역 침범!\n서로 바깥쪽으로 당겨주세요.");
                     return;
                 }
                 
@@ -249,19 +252,17 @@
                     const dR = this.inputs.right ? this.inputs.right.max_d : 0;
                     
                     let vL = 0, vR = 0;
-                    if (this.inputs.left) {
-                        const dtL = Math.max(1, this.inputs.left.t1 - this.inputs.left.t0);
-                        vL = dL / dtL;
-                    }
-                    if (this.inputs.right) {
-                        const dtR = Math.max(1, this.inputs.right.t1 - this.inputs.right.t0);
-                        vR = dR / dtR;
-                    }
+                    if (this.inputs.left) vL = dL / Math.max(1, this.inputs.left.t1 - this.inputs.left.t0);
+                    if (this.inputs.right) vR = dR / Math.max(1, this.inputs.right.t1 - this.inputs.right.t0);
                     
                     const D_max = 220, V_max = 1.8;
                     if (dL > D_max || dR > D_max || vL > V_max || vR > V_max) {
                         realtimeSnap = true;
                     }
+                    
+                    // 룰 2: 당긴 거리에 비례하여 실시간 벌어짐 각도(Spread Angle) 연산 (최대 약 22도)
+                    const lAngle = (dL / D_max) * (Math.PI / 8); 
+                    const rAngle = (dR / D_max) * (Math.PI / 8);
                     
                     const stress = Math.min(1.0, Math.max(dL, dR) / D_max);
                     
@@ -270,10 +271,10 @@
                         leftTouchPos: this.inputs.left ? { x: this.inputs.left.x1, y: this.inputs.left.y1 } : null,
                         rightTouchPos: this.inputs.right ? { x: this.inputs.right.x1, y: this.inputs.right.y1 } : null,
                         stressLevel: stress,
-                        crackProgress: Math.min(1.0, (dL + dR) / 100)
+                        leftSpreadAngle: lAngle,
+                        rightSpreadAngle: rAngle
                     });
                     
-                    // 한계치 초과(부러짐) 또는 장력 상실 시 즉시 판정
                     if (realtimeSnap || tensionLoss) {
                         this.triggerResolve();
                     }
@@ -291,30 +292,21 @@
                     if (this.inputs.right && t.identifier === this.inputs.right.id) shouldResolve = true;
                 }
                 
-                if (shouldResolve) {
-                    this.triggerResolve();
-                }
+                if (shouldResolve) this.triggerResolve();
             }
             
-            // 정상/파손 판정 호출
             triggerResolve() {
                 this.store.update({ phase: 'RESOLVE' });
                 const result = SplitMathEngine.evaluate(this.inputs.left, this.inputs.right);
-                
-                if (!result.isValid) {
-                    this.triggerAbnormalEnd(result.message);
-                } else {
+                if (!result.isValid) this.triggerAbnormalEnd(result.message);
+                else {
                     this.store.update({ phase: 'RESULT', result: result });
                     this.inputs = { left: null, right: null };
                 }
             }
-        
-            // 비정상 조작 처리 (중앙선 침범, 너무 살살 당김 등)
+
             triggerAbnormalEnd(msg) {
-                this.store.update({ 
-                    phase: 'RESOLVE',
-                    result: { isValid: false, message: msg }
-                });
+                this.store.update({ phase: 'RESOLVE', result: { isValid: false, message: msg } });
                 setTimeout(() => {
                     this.inputs = { left: null, right: null };
                     this.store.reset();
@@ -354,75 +346,106 @@
                 const h = this.canvas.height;
                 const ctx = this.ctx;
                 
-                ctx.fillStyle = '#2c3e50';
+                // 배경
+                ctx.fillStyle = '#fce4ec'; 
                 ctx.fillRect(0, 0, w, h);
                 this.updateUI(state);
                 
                 const cx = w / 2;
                 const cy = h / 2;
-                const bW = 120, bH = 300;
+                const bW = 120, bH = 260; // 초콜릿 크기
+                const stickW = 20, stickH = 100; // 나무 막대 크기
                 
                 ctx.save();
                 ctx.translate(cx, cy);
                 
-                if (state.phase === 'RESULT' && state.result && state.result.isValid) {
-                    const res = state.result;
-                    if (res.isBroken) {
-                        ctx.fillStyle = '#c0392b';
-                        ctx.fillRect(-bW/2, -bH/2, bW, bH);
-                        ctx.fillStyle = '#fff'; ctx.font = '24px bold sans-serif'; ctx.textAlign = 'center';
-                        ctx.fillText("부러짐!", 0, 0);
+                // --- 룰 1 & 2: 쌍쌍바 그래픽 & 회전 렌더링 함수 ---
+                const drawHalf = (isLeft, angle, ratio, isBroken = false) => {
+                    ctx.save();
+                    // 하단 중앙을 피벗으로 양 옆으로 벌어지는 회전 적용
+                    ctx.translate(0, bH / 2);
+                    ctx.rotate(isLeft ? -angle : angle);
+                    ctx.translate(0, -bH / 2);
+                    
+                    const rw = bW * (ratio / 100);
+                    const startX = isLeft ? -rw : 0;
+                    
+                    // 1) 나무 막대 그리기
+                    ctx.fillStyle = '#d4a373';
+                    const stickCenterX = isLeft ? -bW/4 : bW/4;
+                    ctx.fillRect(stickCenterX - stickW/2, bH/2, stickW, stickH);
+                    
+                    // 2) 초콜릿 몸통 그리기
+                    ctx.fillStyle = isBroken ? '#c0392b' : '#3e2723'; 
+                    ctx.beginPath();
+                    
+                    // 모서리가 둥근 쌍쌍바 쉐입 (roundRect 지원 브라우저 기준)
+                    if (typeof ctx.roundRect === 'function') {
+                        if (isLeft) ctx.roundRect(startX, -bH/2, rw, bH, [30, 0, 0, 0]);
+                        else ctx.roundRect(startX, -bH/2, rw, bH, [0, 30, 0, 0]);
                     } else {
-                        const lw = bW * (res.leftRatio / 100);
-                        const rw = bW * (res.rightRatio / 100);
-                        
-                        ctx.fillStyle = '#d35400';
-                        ctx.fillRect(-bW/2 - 20, -bH/2, lw, bH);
-                        ctx.fillStyle = '#fff'; ctx.font = '20px bold sans-serif'; ctx.textAlign = 'center';
-                        ctx.fillText(res.leftRatio.toFixed(2) + '%', -bW/2 - 20 + lw/2, 0);
-                        
-                        ctx.fillStyle = '#e67e22';
-                        ctx.fillRect(-bW/2 + lw + 20, -bH/2, rw, bH);
-                        ctx.fillStyle = '#fff';
-                        ctx.fillText(res.rightRatio.toFixed(2) + '%', -bW/2 + lw + 20 + rw/2, 0);
+                        ctx.fillRect(startX, -bH/2, rw, bH);
+                    }
+                    ctx.fill();
+                    
+                    // 결과 텍스트 (초콜릿 위에 비율 표시)
+                    if (state.phase === 'RESULT' && !isBroken) {
+                        ctx.fillStyle = '#fff'; 
+                        ctx.font = 'bold 22px sans-serif'; 
+                        ctx.textAlign = 'center';
+                        ctx.fillText(ratio.toFixed(2) + '%', startX + rw/2, 0);
+                    }
+                    ctx.restore();
+                };
+
+                // 상태에 따른 렌더링 분기
+                if (state.phase === 'RESULT' && state.result && state.result.isValid) {
+                    if (state.result.isBroken) {
+                        // 부러졌을 때는 과도하게 꺾인 연출
+                        drawHalf(true, 0.5, 50, true);
+                        drawHalf(false, 0.5, 50, true);
+                    } else {
+                        // 정상 분할 시 결과 비율대로 렌더링
+                        drawHalf(true, 0.15, state.result.leftRatio);
+                        drawHalf(false, 0.15, state.result.rightRatio);
                     }
                 } else {
-                    ctx.fillStyle = '#e67e22';
-                    ctx.fillRect(-bW/2, -bH/2, bW, bH);
-
-                // 하단부터 찢어지도록 변경된 로직
-                    if (state.phase === 'SWIPING') {
-                        ctx.beginPath();
-                        // 시작점을 막대기가 있는 하단(bH/2)으로 변경
-                        ctx.moveTo(0, bH/2);
-                        // 균열 진행 방향을 위쪽(-bH * state.crackProgress)으로 향하게 설정
-                        ctx.lineTo(0, bH/2 - bH * state.crackProgress);
-                        ctx.strokeStyle = '#2c3e50'; ctx.lineWidth = 4; ctx.stroke();
-                        if (state.stressLevel > 0.8) {
-                            ctx.restore();
-                            ctx.strokeStyle = `rgba(255, 0, 0, ${(state.stressLevel - 0.8)*5})`;
-                            ctx.lineWidth = 15;
-                            ctx.strokeRect(0, 0, w, h);
-                            ctx.save();
-                            ctx.translate(cx, cy);
-                        }
-                    }
+                    // 터치 이동 중 실시간 각도 반영
+                    const lAngle = state.leftSpreadAngle || 0;
+                    const rAngle = state.rightSpreadAngle || 0;
+                    drawHalf(true, lAngle, 50);
+                    drawHalf(false, rAngle, 50);
+                }
+                
+                // 과부하(Stress) 시 화면 붉은 테두리 경고 연출
+                if (state.phase === 'SWIPING' && state.stressLevel > 0.8) {
+                    ctx.restore(); // 중앙 이동 해제
+                    ctx.strokeStyle = `rgba(255, 0, 0, ${(state.stressLevel - 0.8)*5})`;
+                    ctx.lineWidth = 15;
+                    ctx.strokeRect(0, 0, w, h);
+                    ctx.save(); // 다시 저장
+                    ctx.translate(cx, cy);
                 }
                 ctx.restore();
                 
+                // 터치 포인트(손가락 위치) 렌더링
                 if (state.leftTouchPos) {
-                    ctx.beginPath(); ctx.arc(state.leftTouchPos.x, state.leftTouchPos.y, 40, 0, Math.PI*2);
-                    ctx.fillStyle = 'rgba(52, 152, 219, 0.5)'; ctx.fill();
+                    ctx.beginPath(); ctx.arc(state.leftTouchPos.x, state.leftTouchPos.y, 30, 0, Math.PI*2);
+                    ctx.fillStyle = 'rgba(52, 152, 219, 0.6)'; ctx.fill();
                 }
                 if (state.rightTouchPos) {
-                    ctx.beginPath(); ctx.arc(state.rightTouchPos.x, state.rightTouchPos.y, 40, 0, Math.PI*2);
-                    ctx.fillStyle = 'rgba(231, 76, 60, 0.5)'; ctx.fill();
+                    ctx.beginPath(); ctx.arc(state.rightTouchPos.x, state.rightTouchPos.y, 30, 0, Math.PI*2);
+                    ctx.fillStyle = 'rgba(231, 76, 60, 0.6)'; ctx.fill();
                 }
             }
             
             updateUI(state) {
+                // 글씨가 잘 보이도록 기존 텍스트 검정 계열로 변경 
+                this.ui.msg.style.color = '#2c3e50'; 
+                this.ui.msg.style.textShadow = 'none';
+                
                 if (state.phase === 'IDLE') {
-                    this.ui.msg.textContent = "양손으로 막대를 잡으세요\n(화면 좌/우 터치)";
+                    this.ui.msg.textContent = "아래쪽 나무 막대를 각각 잡으세요\n(초콜릿 부분 터치 금지)";
                     this.ui.btn.style.display = 'none';
                     this.ui.debug.textContent = '';
                 } else if (state.phase === 'READY') {
@@ -431,9 +454,11 @@
                     this.ui.msg.textContent = "";
                 } else if (state.phase === 'RESOLVE' && state.result && !state.result.isValid) {
                     this.ui.msg.textContent = state.result.message;
+                    this.ui.msg.style.color = '#c0392b'; // 에러 시 빨간 글씨
                 } else if (state.phase === 'RESULT') {
                     if (state.result.isBroken) {
-                        this.ui.msg.textContent = `[실패] 막대가 부러졌습니다!\n초과 방향: ${state.result.brokenSide}`;
+                        this.ui.msg.textContent = `[실패] 막대가 부러졌습니다!\n(너무 세게 당김)`;
+                        this.ui.msg.style.color = '#c0392b';
                     } else {
                         this.ui.msg.textContent = `[성공] 종합 점수: ${state.result.symmetryScore}점\n${state.result.leftRatio}% : ${state.result.rightRatio}%`;
                     }
