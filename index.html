@@ -4,19 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>쌍쌍바 쪼개기 (1인 모드)</title>
-    <!-- PWA Manifest 연결 -->
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#fce4ec">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #fce4ec; font-family: sans-serif; touch-action: none; user-select: none; overscroll-behavior: none; }
-        /* 캔버스 z-index -1 제거 및 정상 배치 */
         canvas { display: block; width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1; }
-        /* UI 레이어가 캔버스 위에 확실히 뜨도록 z-index 10 부여 */
         #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding-bottom: 80px; box-sizing: border-box; z-index: 10; }
         #message { font-size: 20px; font-weight: bold; margin-bottom: 20px; text-align: center; white-space: pre-wrap; line-height: 1.5; background: rgba(255, 255, 255, 0.95); padding: 15px 25px; border-radius: 12px; color: #2c3e50; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 90%; pointer-events: auto; }
-        #debug-panel { position: absolute; top: 10px; left: 10px; font-size: 14px; font-family: monospace; color: #00ff00; text-align: left; background: rgba(0,0,0,0.7); padding: 10px; border-radius: 5px; pointer-events: auto; }
+        #debug-panel { position: absolute; top: 10px; left: 10px; font-size: 14px; font-family: monospace; color: #00ff00; text-align: left; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 5px; pointer-events: auto; }
         #btn-retry { pointer-events: auto; padding: 12px 30px; font-size: 18px; font-weight: bold; background-color: #e74c3c; color: white; border: none; border-radius: 8px; cursor: pointer; display: none; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.1s; }
         #btn-retry:active { transform: translateY(2px); box-shadow: 0 2px 3px rgba(0,0,0,0.3); }
     </style>
@@ -38,6 +35,7 @@
 
         const SplitMathEngine = {
             evaluate: function(leftInput, rightInput) {
+                const screenW = window.innerWidth;
                 const dxL = leftInput.x1 - leftInput.x0;
                 const dyL = leftInput.y1 - leftInput.y0;
                 const dxR = rightInput.x1 - rightInput.x0;
@@ -55,18 +53,20 @@
                 const vL = dL / dtL;
                 const vR = dR / dtR;
                 
-                if (dL < 30 || dR < 30) {
-                    return { isValid: false, message: "너무 살살 당겼습니다.\n다시 시도하세요." };
+                // 룰 1: 화면 양 끝 20% 영역 안에 도달했는지 확인
+                const leftMargin = screenW * 0.20;
+                const rightMargin = screenW * 0.80;
+                
+                if (leftInput.x1 > leftMargin || rightInput.x1 < rightMargin) {
+                    return { isValid: false, message: "아직 완전히 쪼개지지 않았습니다.\n화면 양 끝에 닿을 때까지 당겨주세요." };
                 }
                 
-                const D_max = 150, V_max = 2.0; 
+                // 룰 2: 거리가 멀다고 실격시키지 않고, 오직 '속도'로만 부러짐 판정
+                const BREAK_V = 3.5; 
                 let brokenSide = 'NONE';
-                const leftBroken = (dL > D_max || vL > V_max);
-                const rightBroken = (dR > D_max || vR > V_max);
-                
-                if (leftBroken && rightBroken) brokenSide = 'BOTH';
-                else if (leftBroken) brokenSide = 'LEFT';
-                else if (rightBroken) brokenSide = 'RIGHT';
+                if (vL > BREAK_V && vR > BREAK_V) brokenSide = 'BOTH';
+                else if (vL > BREAK_V) brokenSide = 'LEFT';
+                else if (vR > BREAK_V) brokenSide = 'RIGHT';
                 
                 const timeDiffMs = Math.abs(leftInput.t1 - rightInput.t1);
                 const metrics = { dL, dR, angleL, angleR, vL, vR, timeDiffMs };
@@ -133,6 +133,7 @@
             updateDimensions() {
                 this.midX = window.innerWidth / 2;
                 this.cy = window.innerHeight / 2 - 80; 
+                this.targetDist = this.midX * 0.8; // 연출을 위한 가상의 도달 목표 거리
             }
             
             onTouchStart(e) {
@@ -143,7 +144,6 @@
                 
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     const t = e.changedTouches[i];
-                    
                     if (t.clientY < stickStartY) {
                         this.triggerAbnormalEnd("초콜릿이 묻습니다!\n아래쪽 나무 막대를 잡으세요.");
                         return;
@@ -209,12 +209,15 @@
                     if (this.inputs.left) vL = dL / Math.max(1, this.inputs.left.t1 - this.inputs.left.t0);
                     if (this.inputs.right) vR = dR / Math.max(1, this.inputs.right.t1 - this.inputs.right.t0);
                     
-                    const D_max = 150, V_max = 2.0;
-                    if (dL > D_max || dR > D_max || vL > V_max || vR > V_max) realtimeSnap = true;
+                    // 실시간 이동 중 너무 확 당기면 즉시 부러짐
+                    const BREAK_V = 3.5;
+                    if (vL > BREAK_V || vR > BREAK_V) realtimeSnap = true;
                     
-                    const lAngle = (dL / D_max) * (Math.PI / 8); 
-                    const rAngle = (dR / D_max) * (Math.PI / 8);
-                    const stress = Math.min(1.0, Math.max(dL, dR) / D_max);
+                    const lAngle = Math.min(dL / this.targetDist, 1.0) * (Math.PI / 8); 
+                    const rAngle = Math.min(dR / this.targetDist, 1.0) * (Math.PI / 8);
+                    
+                    // 위험도(Stress) 게이지는 속도 기준으로 변경하여 시각적 피드백 제공
+                    const stress = Math.min(1.0, Math.max(vL, vR) / BREAK_V);
                     
                     this.store.update({
                         phase: 'SWIPING',
@@ -336,9 +339,10 @@
                     drawHalf(false, rAngle, 50);
                 }
                 
-                if (state.phase === 'SWIPING' && state.stressLevel > 0.8) {
+                // 과부하 경고를 속도에 연동시켜 실시간 피드백
+                if (state.phase === 'SWIPING' && state.stressLevel > 0.7) {
                     ctx.restore();
-                    ctx.strokeStyle = `rgba(255, 0, 0, ${(state.stressLevel - 0.8)*5})`;
+                    ctx.strokeStyle = `rgba(255, 0, 0, ${(state.stressLevel - 0.7)*3})`;
                     ctx.lineWidth = 15;
                     ctx.strokeRect(0, 0, w, h);
                     ctx.save();
@@ -363,7 +367,7 @@
                     this.ui.debug.textContent = '';
                     this.ui.msg.style.color = '#2c3e50';
                 } else if (state.phase === 'READY') {
-                    this.ui.msg.textContent = "바깥쪽으로 당기세요!";
+                    this.ui.msg.textContent = "양쪽 화면 끝에 닿을 때까지 당기세요!";
                 } else if (state.phase === 'SWIPING') {
                     this.ui.msg.textContent = "";
                 } else if (state.phase === 'RESOLVE' && state.result && !state.result.isValid) {
@@ -371,7 +375,7 @@
                     this.ui.msg.style.color = '#c0392b';
                 } else if (state.phase === 'RESULT') {
                     if (state.result.isBroken) {
-                        this.ui.msg.textContent = `[실패] 막대가 부러졌습니다!\n(너무 세게 당김)`;
+                        this.ui.msg.textContent = `[실패] 막대가 부러졌습니다!\n순간적으로 너무 세게 당겼습니다.`;
                         this.ui.msg.style.color = '#c0392b';
                     } else {
                         this.ui.msg.textContent = `[성공] 정확도 점수: ${state.result.symmetryScore}점\n왼쪽 ${state.result.leftRatio}% : 오른쪽 ${state.result.rightRatio}%`;
