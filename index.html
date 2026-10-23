@@ -372,13 +372,15 @@
                 } else {
                     ctx.fillStyle = '#e67e22';
                     ctx.fillRect(-bW/2, -bH/2, bW, bH);
-                    
+
+                // 하단부터 찢어지도록 변경된 로직
                     if (state.phase === 'SWIPING') {
                         ctx.beginPath();
-                        ctx.moveTo(0, -bH/2);
-                        ctx.lineTo(0, -bH/2 + bH * state.crackProgress);
+                        // 시작점을 막대기가 있는 하단(bH/2)으로 변경
+                        ctx.moveTo(0, bH/2);
+                        // 균열 진행 방향을 위쪽(-bH * state.crackProgress)으로 향하게 설정
+                        ctx.lineTo(0, bH/2 - bH * state.crackProgress);
                         ctx.strokeStyle = '#2c3e50'; ctx.lineWidth = 4; ctx.stroke();
-                        
                         if (state.stressLevel > 0.8) {
                             ctx.restore();
                             ctx.strokeStyle = `rgba(255, 0, 0, ${(state.stressLevel - 0.8)*5})`;
