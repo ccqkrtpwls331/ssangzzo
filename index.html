@@ -158,7 +158,8 @@
                         id: t.identifier,
                         x0: t.clientX, y0: t.clientY,
                         x1: t.clientX, y1: t.clientY,
-                        t0: performance.now(), t1: null
+                        t0: performance.now(), t1: performance.now(),
+                        max_d: 0 // 룰 1: 쪼개진 최대 거리 추적용
                     };
                     
                     if (isLeft && !this.inputs.left) this.inputs.left = inputObj;
@@ -179,32 +180,72 @@
                 if (this.store.state.phase !== 'READY' && this.store.state.phase !== 'SWIPING') return;
                 
                 let moved = false;
+                let realtimeSnap = false; // 룰 2: 실시간 파손 여부 플래그
+                const now = performance.now();
+                
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     const t = e.changedTouches[i];
+                    
                     if (this.inputs.left && t.identifier === this.inputs.left.id) {
-                        this.inputs.left.x1 = t.clientX;
-                        this.inputs.left.y1 = t.clientY;
-                        moved = true;
+                        const curr_d = Math.hypot(t.clientX - this.inputs.left.x0, t.clientY - this.inputs.left.y0);
+                        // 기존 최대 거리보다 더 당겼을 때만 업데이트 (안으로 밀어도 무시됨)
+                        if (curr_d > this.inputs.left.max_d) {
+                            this.inputs.left.max_d = curr_d;
+                            this.inputs.left.x1 = t.clientX;
+                            this.inputs.left.y1 = t.clientY;
+                            this.inputs.left.t1 = now;
+                            moved = true;
+                        }
                     }
                     if (this.inputs.right && t.identifier === this.inputs.right.id) {
-                        this.inputs.right.x1 = t.clientX;
-                        this.inputs.right.y1 = t.clientY;
-                        moved = true;
+                        const curr_d = Math.hypot(t.clientX - this.inputs.right.x0, t.clientY - this.inputs.right.y0);
+                        // 기존 최대 거리보다 더 당겼을 때만 업데이트
+                        if (curr_d > this.inputs.right.max_d) {
+                            this.inputs.right.max_d = curr_d;
+                            this.inputs.right.x1 = t.clientX;
+                            this.inputs.right.y1 = t.clientY;
+                            this.inputs.right.t1 = now;
+                            moved = true;
+                        }
                     }
                 }
                 
                 if (moved) {
-                    const dL = Math.hypot(this.inputs.left.x1 - this.inputs.left.x0, this.inputs.left.y1 - this.inputs.left.y0);
-                    const dR = Math.hypot(this.inputs.right.x1 - this.inputs.right.x0, this.inputs.right.y1 - this.inputs.right.y0);
-                    const stress = Math.min(1.0, Math.max(dL, dR) / 220);
+                    const dL = this.inputs.left ? this.inputs.left.max_d : 0;
+                    const dR = this.inputs.right ? this.inputs.right.max_d : 0;
+                    
+                    // 실시간 속도 계산
+                    let vL = 0, vR = 0;
+                    if (this.inputs.left) {
+                        const dtL = Math.max(1, this.inputs.left.t1 - this.inputs.left.t0);
+                        vL = dL / dtL;
+                    }
+                    if (this.inputs.right) {
+                        const dtR = Math.max(1, this.inputs.right.t1 - this.inputs.right.t0);
+                        vR = dR / dtR;
+                    }
+                    
+                    const D_max = 220, V_max = 1.8;
+                    
+                    // 룰 2: 이동 도중 한계치를 넘으면 실시간 부러짐 플래그 ON
+                    if (dL > D_max || dR > D_max || vL > V_max || vR > V_max) {
+                        realtimeSnap = true;
+                    }
+                    
+                    const stress = Math.min(1.0, Math.max(dL, dR) / D_max);
                     
                     this.store.update({
                         phase: 'SWIPING',
-                        leftTouchPos: { x: this.inputs.left.x1, y: this.inputs.left.y1 },
-                        rightTouchPos: { x: this.inputs.right.x1, y: this.inputs.right.y1 },
+                        leftTouchPos: this.inputs.left ? { x: this.inputs.left.x1, y: this.inputs.left.y1 } : null,
+                        rightTouchPos: this.inputs.right ? { x: this.inputs.right.x1, y: this.inputs.right.y1 } : null,
                         stressLevel: stress,
                         crackProgress: Math.min(1.0, (dL + dR) / 100)
                     });
+                    
+                    // 파손 시 손을 떼지 않아도 즉시 종료
+                    if (realtimeSnap) {
+                        this.triggerResolve();
+                    }
                 }
             }
             
@@ -212,37 +253,33 @@
                 e.preventDefault();
                 if (this.store.state.phase !== 'READY' && this.store.state.phase !== 'SWIPING') return;
                 
-                let leftEnded = false;
-                let rightEnded = false;
-                const now = performance.now();
-                
+                let shouldResolve = false;
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     const t = e.changedTouches[i];
-                    if (this.inputs.left && t.identifier === this.inputs.left.id) {
-                        this.inputs.left.t1 = now; leftEnded = true;
-                    }
-                    if (this.inputs.right && t.identifier === this.inputs.right.id) {
-                        this.inputs.right.t1 = now; rightEnded = true;
-                    }
+                    if (this.inputs.left && t.identifier === this.inputs.left.id) shouldResolve = true;
+                    if (this.inputs.right && t.identifier === this.inputs.right.id) shouldResolve = true;
                 }
                 
-                if (leftEnded || rightEnded) {
-                    if (!this.inputs.left.t1) this.inputs.left.t1 = now;
-                    if (!this.inputs.right.t1) this.inputs.right.t1 = now;
-                    
-                    this.store.update({ phase: 'RESOLVE' });
-                    const result = SplitMathEngine.evaluate(this.inputs.left, this.inputs.right);
-                    
-                    if (!result.isValid) {
-                        this.store.update({ result: result });
-                        setTimeout(() => {
-                            this.inputs = { left: null, right: null };
-                            this.store.reset();
-                        }, 1500);
-                    } else {
-                        this.store.update({ phase: 'RESULT', result: result });
+                // 어느 한 손가락이라도 화면에서 떨어지면 판정 시작
+                if (shouldResolve) {
+                    this.triggerResolve();
+                }
+            }
+            
+            // 판정 로직 호출을 분리
+            triggerResolve() {
+                this.store.update({ phase: 'RESOLVE' });
+                const result = SplitMathEngine.evaluate(this.inputs.left, this.inputs.right);
+                
+                if (!result.isValid) {
+                    this.store.update({ result: result });
+                    setTimeout(() => {
                         this.inputs = { left: null, right: null };
-                    }
+                        this.store.reset();
+                    }, 1500);
+                } else {
+                    this.store.update({ phase: 'RESULT', result: result });
+                    this.inputs = { left: null, right: null };
                 }
             }
         }
