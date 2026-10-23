@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>쌍쌍바 쪼개기 (1인 모드)</title>
+    <!-- PWA Manifest 연결 -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#2c3e50">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #2c3e50; font-family: sans-serif; touch-action: none; user-select: none; overscroll-behavior: none; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; text-shadow: 1px 1px 3px rgba(0,0,0,0.8); }
+        #message { font-size: 24px; font-weight: bold; margin-bottom: 20px; text-align: center; white-space: pre-wrap; line-height: 1.4; }
+        #debug-panel { position: absolute; top: 10px; left: 10px; font-size: 14px; font-family: monospace; color: #00ff00; text-align: left; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; }
+        #btn-retry { pointer-events: auto; padding: 12px 24px; font-size: 18px; font-weight: bold; background-color: #e74c3c; color: white; border: none; border-radius: 8px; cursor: pointer; display: none; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        #btn-retry:active { transform: translateY(2px); box-shadow: 0 2px 3px rgba(0,0,0,0.3); }
+        canvas { display: block; width: 100%; height: 100%; }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="ui-layer">
+        <div id="debug-panel"></div>
+        <div id="message">양손으로 막대를 잡으세요\n(화면 좌/우 터치)</div>
+        <button id="btn-retry">다시 하기</button>
+    </div>
+
+    <script>
+        // 서비스 워커 등록
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => console.log('ServiceWorker registered!', reg.scope))
+                    .catch(err => console.log('ServiceWorker registration failed: ', err));
+            });
+        }
+
+        // --- 2. SplitMathEngine (코어 판정 알고리즘) ---
+        const SplitMathEngine = {
+            evaluate: function(leftInput, rightInput) {
+                const dxL = leftInput.x1 - leftInput.x0;
+                const dyL = leftInput.y1 - leftInput.y0;
+                const dxR = rightInput.x1 - rightInput.x0;
+                const dyR = rightInput.y1 - rightInput.y0;
+                
+                const dL = Math.sqrt(dxL*dxL + dyL*dyL);
+                const dR = Math.sqrt(dxR*dxR + dyR*dyR);
+                
+                const angleL = Math.atan2(dyL, dxL) * 180 / Math.PI;
+                const angleR = Math.atan2(dyR, dxR) * 180 / Math.PI;
+                
+                const dtL = Math.max(1, leftInput.t1 - leftInput.t0);
+                const dtR = Math.max(1, rightInput.t1 - rightInput.t0);
+                
+                const vL = dL / dtL;
+                const vR = dR / dtR;
+                
+                if (dL < 30 || dR < 30) {
+                    return { isValid: false, message: "너무 살살 당겼습니다.\n다시 시도하세요." };
+                }
+                
+                const D_max = 220, V_max = 1.8;
+                let brokenSide = 'NONE';
+                const leftBroken = (dL > D_max || vL > V_max);
+                const rightBroken = (dR > D_max || vR > V_max);
+                
+                if (leftBroken && rightBroken) brokenSide = 'BOTH';
+                else if (leftBroken) brokenSide = 'LEFT';
+                else if (rightBroken) brokenSide = 'RIGHT';
+                
+                const timeDiffMs = Math.abs(leftInput.t1 - rightInput.t1);
+                const metrics = { dL, dR, angleL, angleR, vL, vR, timeDiffMs };
+
+                if (brokenSide !== 'NONE') {
+                    return {
+                        isValid: true, isBroken: true, brokenSide: brokenSide,
+                        symmetryScore: 0.00, leftRatio: 0.00, rightRatio: 0.00,
+                        metrics: metrics
+                    };
+                }
+                
+                const E_dist = Math.abs(dL - dR) / Math.max(dL, dR);
+                const E_angle = Math.abs(angleL + angleR - 180) / 180;
+                const E_time = Math.min(1.0, timeDiffMs / 100);
+                
+                let S = 100.00 * (1 - (0.45 * E_dist + 0.35 * E_angle + 0.20 * E_time));
+                S = Number(Math.max(0, S).toFixed(2));
+                
+                const forceL = dL * vL;
+                const forceR = dR * vR;
+                let Bias = (forceL - forceR) / (forceL + forceR);
+                if (isNaN(Bias)) Bias = 0;
+                
+                const leftRatio = Number((50.00 + (Bias * 40.00)).toFixed(2));
+                const rightRatio = Number((100.00 - leftRatio).toFixed(2));
+                
+                return {
+                    isValid: true, isBroken: false, brokenSide: 'NONE',
+                    symmetryScore: S, leftRatio: leftRatio, rightRatio: rightRatio,
+                    metrics: metrics
+                };
+            }
+        };
+
+        // --- 3. GameStateStore (상태 머신) ---
+        class GameStateStore {
+            constructor() {
+                this.state = {
+                    phase: 'IDLE', leftSpreadAngle: 0.0, rightSpreadAngle: 0.0,
+                    crackProgress: 0.0, stressLevel: 0.0,
+                    leftTouchPos: null, rightTouchPos: null, result: null
+                };
+                this.listeners = [];
+            }
+            subscribe(listener) { this.listeners.push(listener); }
+            update(newState) {
+                this.state = { ...this.state, ...newState };
+                this.notify();
+            }
+            notify() { this.listeners.forEach(l => l(this.state)); }
+            reset() {
+                this.update({
+                    phase: 'IDLE', leftSpreadAngle: 0.0, rightSpreadAngle: 0.0,
+                    crackProgress: 0.0, stressLevel: 0.0,
+                    leftTouchPos: null, rightTouchPos: null, result: null
+                });
+            }
+        }
+
+        const store = new GameStateStore();
+
+        // --- 1. InputController (터치 입력 및 제스처) ---
+        class InputController {
+            constructor(store) {
+                this.store = store;
+                this.inputs = { left: null, right: null };
+                this.midX = window.innerWidth / 2;
+                
+                window.addEventListener('resize', () => { this.midX = window.innerWidth / 2; });
+                const canvas = document.getElementById('gameCanvas');
+                
+                canvas.addEventListener('touchstart', this.onTouchStart.bind(this), { passive: false });
+                canvas.addEventListener('touchmove', this.onTouchMove.bind(this), { passive: false });
+                canvas.addEventListener('touchend', this.onTouchEnd.bind(this), { passive: false });
+                canvas.addEventListener('touchcancel', this.onTouchEnd.bind(this), { passive: false });
+            }
+            
+            onTouchStart(e) {
+                e.preventDefault();
+                if (this.store.state.phase === 'RESULT') return;
+                
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const t = e.changedTouches[i];
+                    const isLeft = t.clientX < this.midX;
+                    const inputObj = {
+                        id: t.identifier,
+                        x0: t.clientX, y0: t.clientY,
+                        x1: t.clientX, y1: t.clientY,
+                        t0: performance.now(), t1: null
+                    };
+                    
+                    if (isLeft && !this.inputs.left) this.inputs.left = inputObj;
+                    else if (!isLeft && !this.inputs.right) this.inputs.right = inputObj;
+                }
+                
+                if (this.inputs.left && this.inputs.right && this.store.state.phase === 'IDLE') {
+                    this.store.update({
+                        phase: 'READY',
+                        leftTouchPos: { x: this.inputs.left.x1, y: this.inputs.left.y1 },
+                        rightTouchPos: { x: this.inputs.right.x1, y: this.inputs.right.y1 }
+                    });
+                }
+            }
+            
+            onTouchMove(e) {
+                e.preventDefault();
+                if (this.store.state.phase !== 'READY' && this.store.state.phase !== 'SWIPING') return;
+                
+                let moved = false;
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const t = e.changedTouches[i];
+                    if (this.inputs.left && t.identifier === this.inputs.left.id) {
+                        this.inputs.left.x1 = t.clientX;
+                        this.inputs.left.y1 = t.clientY;
+                        moved = true;
+                    }
+                    if (this.inputs.right && t.identifier === this.inputs.right.id) {
+                        this.inputs.right.x1 = t.clientX;
+                        this.inputs.right.y1 = t.clientY;
+                        moved = true;
+                    }
+                }
+                
+                if (moved) {
+                    const dL = Math.hypot(this.inputs.left.x1 - this.inputs.left.x0, this.inputs.left.y1 - this.inputs.left.y0);
+                    const dR = Math.hypot(this.inputs.right.x1 - this.inputs.right.x0, this.inputs.right.y1 - this.inputs.right.y0);
+                    const stress = Math.min(1.0, Math.max(dL, dR) / 220);
+                    
+                    this.store.update({
+                        phase: 'SWIPING',
+                        leftTouchPos: { x: this.inputs.left.x1, y: this.inputs.left.y1 },
+                        rightTouchPos: { x: this.inputs.right.x1, y: this.inputs.right.y1 },
+                        stressLevel: stress,
+                        crackProgress: Math.min(1.0, (dL + dR) / 100)
+                    });
+                }
+            }
+            
+            onTouchEnd(e) {
+                e.preventDefault();
+                if (this.store.state.phase !== 'READY' && this.store.state.phase !== 'SWIPING') return;
+                
+                let leftEnded = false;
+                let rightEnded = false;
+                const now = performance.now();
+                
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const t = e.changedTouches[i];
+                    if (this.inputs.left && t.identifier === this.inputs.left.id) {
+                        this.inputs.left.t1 = now; leftEnded = true;
+                    }
+                    if (this.inputs.right && t.identifier === this.inputs.right.id) {
+                        this.inputs.right.t1 = now; rightEnded = true;
+                    }
+                }
+                
+                if (leftEnded || rightEnded) {
+                    if (!this.inputs.left.t1) this.inputs.left.t1 = now;
+                    if (!this.inputs.right.t1) this.inputs.right.t1 = now;
+                    
+                    this.store.update({ phase: 'RESOLVE' });
+                    const result = SplitMathEngine.evaluate(this.inputs.left, this.inputs.right);
+                    
+                    if (!result.isValid) {
+                        this.store.update({ result: result });
+                        setTimeout(() => {
+                            this.inputs = { left: null, right: null };
+                            this.store.reset();
+                        }, 1500);
+                    } else {
+                        this.store.update({ phase: 'RESULT', result: result });
+                        this.inputs = { left: null, right: null };
+                    }
+                }
+            }
+        }
+
+        // --- 4. RendererAdapter (뷰 계층) ---
+        class RendererAdapter {
+            constructor(store) {
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.store = store;
+                
+                this.ui = {
+                    msg: document.getElementById('message'),
+                    btn: document.getElementById('btn-retry'),
+                    debug: document.getElementById('debug-panel')
+                };
+                
+                this.resize();
+                window.addEventListener('resize', this.resize.bind(this));
+                this.ui.btn.addEventListener('click', () => this.store.reset());
+                
+                this.store.subscribe(this.render.bind(this));
+                this.render(this.store.state);
+            }
+            
+            resize() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+                this.render(this.store.state);
+            }
+            
+            render(state) {
+                const w = this.canvas.width;
+                const h = this.canvas.height;
+                const ctx = this.ctx;
+                
+                ctx.fillStyle = '#2c3e50';
+                ctx.fillRect(0, 0, w, h);
+                this.updateUI(state);
+                
+                const cx = w / 2;
+                const cy = h / 2;
+                const bW = 120, bH = 300;
+                
+                ctx.save();
+                ctx.translate(cx, cy);
+                
+                if (state.phase === 'RESULT' && state.result && state.result.isValid) {
+                    const res = state.result;
+                    if (res.isBroken) {
+                        ctx.fillStyle = '#c0392b';
+                        ctx.fillRect(-bW/2, -bH/2, bW, bH);
+                        ctx.fillStyle = '#fff'; ctx.font = '24px bold sans-serif'; ctx.textAlign = 'center';
+                        ctx.fillText("부러짐!", 0, 0);
+                    } else {
+                        const lw = bW * (res.leftRatio / 100);
+                        const rw = bW * (res.rightRatio / 100);
+                        
+                        ctx.fillStyle = '#d35400';
+                        ctx.fillRect(-bW/2 - 20, -bH/2, lw, bH);
+                        ctx.fillStyle = '#fff'; ctx.font = '20px bold sans-serif'; ctx.textAlign = 'center';
+                        ctx.fillText(res.leftRatio.toFixed(2) + '%', -bW/2 - 20 + lw/2, 0);
+                        
+                        ctx.fillStyle = '#e67e22';
+                        ctx.fillRect(-bW/2 + lw + 20, -bH/2, rw, bH);
+                        ctx.fillStyle = '#fff';
+                        ctx.fillText(res.rightRatio.toFixed(2) + '%', -bW/2 + lw + 20 + rw/2, 0);
+                    }
+                } else {
+                    ctx.fillStyle = '#e67e22';
+                    ctx.fillRect(-bW/2, -bH/2, bW, bH);
+                    
+                    if (state.phase === 'SWIPING') {
+                        ctx.beginPath();
+                        ctx.moveTo(0, -bH/2);
+                        ctx.lineTo(0, -bH/2 + bH * state.crackProgress);
+                        ctx.strokeStyle = '#2c3e50'; ctx.lineWidth = 4; ctx.stroke();
+                        
+                        if (state.stressLevel > 0.8) {
+                            ctx.restore();
+                            ctx.strokeStyle = `rgba(255, 0, 0, ${(state.stressLevel - 0.8)*5})`;
+                            ctx.lineWidth = 15;
+                            ctx.strokeRect(0, 0, w, h);
+                            ctx.save();
+                            ctx.translate(cx, cy);
+                        }
+                    }
+                }
+                ctx.restore();
+                
+                if (state.leftTouchPos) {
+                    ctx.beginPath(); ctx.arc(state.leftTouchPos.x, state.leftTouchPos.y, 40, 0, Math.PI*2);
+                    ctx.fillStyle = 'rgba(52, 152, 219, 0.5)'; ctx.fill();
+                }
+                if (state.rightTouchPos) {
+                    ctx.beginPath(); ctx.arc(state.rightTouchPos.x, state.rightTouchPos.y, 40, 0, Math.PI*2);
+                    ctx.fillStyle = 'rgba(231, 76, 60, 0.5)'; ctx.fill();
+                }
+            }
+            
+            updateUI(state) {
+                if (state.phase === 'IDLE') {
+                    this.ui.msg.textContent = "양손으로 막대를 잡으세요\n(화면 좌/우 터치)";
+                    this.ui.btn.style.display = 'none';
+                    this.ui.debug.textContent = '';
+                } else if (state.phase === 'READY') {
+                    this.ui.msg.textContent = "바깥쪽으로 당기세요!";
+                } else if (state.phase === 'SWIPING') {
+                    this.ui.msg.textContent = "";
+                } else if (state.phase === 'RESOLVE' && state.result && !state.result.isValid) {
+                    this.ui.msg.textContent = state.result.message;
+                } else if (state.phase === 'RESULT') {
+                    if (state.result.isBroken) {
+                        this.ui.msg.textContent = `[실패] 막대가 부러졌습니다!\n초과 방향: ${state.result.brokenSide}`;
+                    } else {
+                        this.ui.msg.textContent = `[성공] 종합 점수: ${state.result.symmetryScore}점\n${state.result.leftRatio}% : ${state.result.rightRatio}%`;
+                    }
+                    
+                    const m = state.result.metrics;
+                    if(m) {
+                        this.ui.debug.innerHTML = `dL: ${m.dL.toFixed(1)} | dR: ${m.dR.toFixed(1)}<br>vL: ${m.vL.toFixed(2)} | vR: ${m.vR.toFixed(2)}<br>angL: ${m.angleL.toFixed(1)} | angR: ${m.angleR.toFixed(1)}<br>timeDiff: ${m.timeDiffMs.toFixed(0)}ms`;
+                    }
+                    this.ui.btn.style.display = 'block';
+                }
+            }
+        }
+
+        const inputCtrl = new InputController(store);
+        const renderer = new RendererAdapter(store);
+    </script>
+</body>
+</html>
