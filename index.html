@@ -149,7 +149,8 @@
             
             onTouchStart(e) {
                 e.preventDefault();
-                if (this.store.state.phase === 'RESULT') return;
+                // 결과 표시 중이거나 에러 메시지를 띄우는 중(RESOLVE)이면 새 터치 무시
+                if (this.store.state.phase === 'RESULT' || this.store.state.phase === 'RESOLVE') return;
                 
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     const t = e.changedTouches[i];
@@ -159,13 +160,29 @@
                         x0: t.clientX, y0: t.clientY,
                         x1: t.clientX, y1: t.clientY,
                         t0: performance.now(), t1: performance.now(),
-                        max_d: 0 // 최대 이동 거리 추적
+                        max_d: 0 // 최대 이동 거리 추적용
                     };
                     
-                    if (isLeft && !this.inputs.left) this.inputs.left = inputObj;
-                    else if (!isLeft && !this.inputs.right) this.inputs.right = inputObj;
+                    if (isLeft) {
+                        if (!this.inputs.left) {
+                            this.inputs.left = inputObj;
+                        } else {
+                            // 이미 왼쪽에 손가락이 있는데 또 왼쪽을 터치한 경우
+                            this.triggerAbnormalEnd("영역 침범!\n좌/우 영역을 각각 하나씩 잡으세요.");
+                            return;
+                        }
+                    } else {
+                        if (!this.inputs.right) {
+                            this.inputs.right = inputObj;
+                        } else {
+                            // 이미 오른쪽에 손가락이 있는데 또 오른쪽을 터치한 경우
+                            this.triggerAbnormalEnd("영역 침범!\n좌/우 영역을 각각 하나씩 잡으세요.");
+                            return;
+                        }
+                    }
                 }
                 
+                // 양쪽 영역 터치가 정상적으로 감지되었을 때만 READY 상태로 진입
                 if (this.inputs.left && this.inputs.right && this.store.state.phase === 'IDLE') {
                     this.store.update({
                         phase: 'READY',
