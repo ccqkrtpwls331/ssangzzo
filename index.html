@@ -155,7 +155,6 @@
                 e.preventDefault();
                 if (this.store.state.phase === 'RESULT' || this.store.state.phase === 'RESOLVE') return;
                 
-                // 룰 3: 나무 막대기 영역 판단 기준 (화면 중앙에서 50px 아래부터 막대로 간주)
                 const stickStartY = this.midY + 50; 
                 
                 for (let i = 0; i < e.changedTouches.length; i++) {
@@ -260,7 +259,6 @@
                         realtimeSnap = true;
                     }
                     
-                    // 룰 2: 당긴 거리에 비례하여 실시간 벌어짐 각도(Spread Angle) 연산 (최대 약 22도)
                     const lAngle = (dL / D_max) * (Math.PI / 8); 
                     const rAngle = (dR / D_max) * (Math.PI / 8);
                     
@@ -346,40 +344,36 @@
                 const h = this.canvas.height;
                 const ctx = this.ctx;
                 
-                // 배경
                 ctx.fillStyle = '#fce4ec'; 
                 ctx.fillRect(0, 0, w, h);
                 this.updateUI(state);
                 
                 const cx = w / 2;
                 const cy = h / 2;
-                const bW = 120, bH = 260; // 초콜릿 크기
-                const stickW = 20, stickH = 100; // 나무 막대 크기
+                const bW = 120, bH = 260;
+                const stickW = 20, stickH = 100;
                 
                 ctx.save();
                 ctx.translate(cx, cy);
                 
-                // --- 룰 1 & 2: 쌍쌍바 그래픽 & 회전 렌더링 함수 ---
                 const drawHalf = (isLeft, angle, ratio, isBroken = false) => {
                     ctx.save();
-                    // 하단 중앙을 피벗으로 양 옆으로 벌어지는 회전 적용
-                    ctx.translate(0, bH / 2);
-                    ctx.rotate(isLeft ? -angle : angle);
+                    // 상단 중앙을 피벗으로 설정하여 위는 붙어있고 아래부터 갈라지게 수정
                     ctx.translate(0, -bH / 2);
+                    // 회전 방향 반전: 왼쪽은 시계방향, 오른쪽은 반시계방향으로 뻗어나감
+                    ctx.rotate(isLeft ? angle : -angle);
+                    ctx.translate(0, bH / 2);
                     
                     const rw = bW * (ratio / 100);
                     const startX = isLeft ? -rw : 0;
                     
-                    // 1) 나무 막대 그리기
                     ctx.fillStyle = '#d4a373';
                     const stickCenterX = isLeft ? -bW/4 : bW/4;
                     ctx.fillRect(stickCenterX - stickW/2, bH/2, stickW, stickH);
                     
-                    // 2) 초콜릿 몸통 그리기
                     ctx.fillStyle = isBroken ? '#c0392b' : '#3e2723'; 
                     ctx.beginPath();
                     
-                    // 모서리가 둥근 쌍쌍바 쉐입 (roundRect 지원 브라우저 기준)
                     if (typeof ctx.roundRect === 'function') {
                         if (isLeft) ctx.roundRect(startX, -bH/2, rw, bH, [30, 0, 0, 0]);
                         else ctx.roundRect(startX, -bH/2, rw, bH, [0, 30, 0, 0]);
@@ -388,7 +382,6 @@
                     }
                     ctx.fill();
                     
-                    // 결과 텍스트 (초콜릿 위에 비율 표시)
                     if (state.phase === 'RESULT' && !isBroken) {
                         ctx.fillStyle = '#fff'; 
                         ctx.font = 'bold 22px sans-serif'; 
@@ -398,37 +391,31 @@
                     ctx.restore();
                 };
 
-                // 상태에 따른 렌더링 분기
                 if (state.phase === 'RESULT' && state.result && state.result.isValid) {
                     if (state.result.isBroken) {
-                        // 부러졌을 때는 과도하게 꺾인 연출
                         drawHalf(true, 0.5, 50, true);
                         drawHalf(false, 0.5, 50, true);
                     } else {
-                        // 정상 분할 시 결과 비율대로 렌더링
                         drawHalf(true, 0.15, state.result.leftRatio);
                         drawHalf(false, 0.15, state.result.rightRatio);
                     }
                 } else {
-                    // 터치 이동 중 실시간 각도 반영
                     const lAngle = state.leftSpreadAngle || 0;
                     const rAngle = state.rightSpreadAngle || 0;
                     drawHalf(true, lAngle, 50);
                     drawHalf(false, rAngle, 50);
                 }
                 
-                // 과부하(Stress) 시 화면 붉은 테두리 경고 연출
                 if (state.phase === 'SWIPING' && state.stressLevel > 0.8) {
-                    ctx.restore(); // 중앙 이동 해제
+                    ctx.restore();
                     ctx.strokeStyle = `rgba(255, 0, 0, ${(state.stressLevel - 0.8)*5})`;
                     ctx.lineWidth = 15;
                     ctx.strokeRect(0, 0, w, h);
-                    ctx.save(); // 다시 저장
+                    ctx.save();
                     ctx.translate(cx, cy);
                 }
                 ctx.restore();
                 
-                // 터치 포인트(손가락 위치) 렌더링
                 if (state.leftTouchPos) {
                     ctx.beginPath(); ctx.arc(state.leftTouchPos.x, state.leftTouchPos.y, 30, 0, Math.PI*2);
                     ctx.fillStyle = 'rgba(52, 152, 219, 0.6)'; ctx.fill();
@@ -440,7 +427,6 @@
             }
             
             updateUI(state) {
-                // 글씨가 잘 보이도록 기존 텍스트 검정 계열로 변경 
                 this.ui.msg.style.color = '#2c3e50'; 
                 this.ui.msg.style.textShadow = 'none';
                 
@@ -454,7 +440,7 @@
                     this.ui.msg.textContent = "";
                 } else if (state.phase === 'RESOLVE' && state.result && !state.result.isValid) {
                     this.ui.msg.textContent = state.result.message;
-                    this.ui.msg.style.color = '#c0392b'; // 에러 시 빨간 글씨
+                    this.ui.msg.style.color = '#c0392b';
                 } else if (state.phase === 'RESULT') {
                     if (state.result.isBroken) {
                         this.ui.msg.textContent = `[실패] 막대가 부러졌습니다!\n(너무 세게 당김)`;
