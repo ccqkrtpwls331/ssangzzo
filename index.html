@@ -6,17 +6,19 @@
     <title>쌍쌍바 쪼개기 (1인 모드)</title>
     <!-- PWA Manifest 연결 -->
     <link rel="manifest" href="manifest.json">
-    <meta name="theme-color" content="#2c3e50">
+    <meta name="theme-color" content="#fce4ec">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #2c3e50; font-family: sans-serif; touch-action: none; user-select: none; overscroll-behavior: none; }
-        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding-bottom: 50px; box-sizing: border-box; }
-        #message { font-size: 20px; font-weight: bold; margin-bottom: 20px; text-align: center; white-space: pre-wrap; line-height: 1.5; background: rgba(255, 255, 255, 0.9); padding: 15px 25px; border-radius: 12px; color: #2c3e50; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 90%; }
-        #debug-panel { position: absolute; top: 10px; left: 10px; font-size: 14px; font-family: monospace; color: #00ff00; text-align: left; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #fce4ec; font-family: sans-serif; touch-action: none; user-select: none; overscroll-behavior: none; }
+        /* 캔버스 z-index -1 제거 및 정상 배치 */
+        canvas { display: block; width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1; }
+        /* UI 레이어가 캔버스 위에 확실히 뜨도록 z-index 10 부여 */
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding-bottom: 80px; box-sizing: border-box; z-index: 10; }
+        #message { font-size: 20px; font-weight: bold; margin-bottom: 20px; text-align: center; white-space: pre-wrap; line-height: 1.5; background: rgba(255, 255, 255, 0.95); padding: 15px 25px; border-radius: 12px; color: #2c3e50; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 90%; pointer-events: auto; }
+        #debug-panel { position: absolute; top: 10px; left: 10px; font-size: 14px; font-family: monospace; color: #00ff00; text-align: left; background: rgba(0,0,0,0.7); padding: 10px; border-radius: 5px; pointer-events: auto; }
         #btn-retry { pointer-events: auto; padding: 12px 30px; font-size: 18px; font-weight: bold; background-color: #e74c3c; color: white; border: none; border-radius: 8px; cursor: pointer; display: none; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.1s; }
         #btn-retry:active { transform: translateY(2px); box-shadow: 0 2px 3px rgba(0,0,0,0.3); }
-        canvas { display: block; width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: -1; }
     </style>
 </head>
 <body>
@@ -57,7 +59,7 @@
                     return { isValid: false, message: "너무 살살 당겼습니다.\n다시 시도하세요." };
                 }
                 
-                const D_max = 150, V_max = 2.0; // 당기는 요구 거리(D_max) 축소로 모바일 편의성 증가
+                const D_max = 150, V_max = 2.0; 
                 let brokenSide = 'NONE';
                 const leftBroken = (dL > D_max || vL > V_max);
                 const rightBroken = (dR > D_max || vR > V_max);
@@ -130,14 +132,14 @@
             
             updateDimensions() {
                 this.midX = window.innerWidth / 2;
-                this.cy = window.innerHeight / 2 - 80; // 아이스크림 렌더링 중심축 (상향 조정)
+                this.cy = window.innerHeight / 2 - 80; 
             }
             
             onTouchStart(e) {
                 e.preventDefault();
                 if (this.store.state.phase === 'RESULT' || this.store.state.phase === 'RESOLVE') return;
                 
-                const stickStartY = this.cy + 50; // 나무 막대 영역 시작점 동기화
+                const stickStartY = this.cy + 50; 
                 
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     const t = e.changedTouches[i];
@@ -287,7 +289,7 @@
                 this.updateUI(state);
                 
                 const cx = w / 2;
-                const cy = h / 2 - 80; // 렌더링 위치를 위로 80px 이동
+                const cy = h / 2 - 80; 
                 const bW = 120, bH = 260;
                 const stickW = 20, stickH = 100;
                 
@@ -316,8 +318,6 @@
                         ctx.fillRect(startX, -bH/2, rw, bH);
                     }
                     ctx.fill();
-                    
-                    // 캔버스 내의 중복 텍스트(퍼센트 표기) 제거
                     ctx.restore();
                 };
 
