@@ -36,6 +36,11 @@
         const SplitMathEngine = {
             evaluate: function(leftInput, rightInput) {
                 const screenW = window.innerWidth;
+                
+                // 이동 시간 및 거리 계산
+                const dtL = Math.max(1, leftInput.t1 - leftInput.t0);
+                const dtR = Math.max(1, rightInput.t1 - rightInput.t0);
+                
                 const dxL = leftInput.x1 - leftInput.x0;
                 const dyL = leftInput.y1 - leftInput.y0;
                 const dxR = rightInput.x1 - rightInput.x0;
@@ -44,32 +49,25 @@
                 const dL = Math.sqrt(dxL*dxL + dyL*dyL);
                 const dR = Math.sqrt(dxR*dxR + dyR*dyR);
                 
-                const angleL = Math.atan2(dyL, dxL) * 180 / Math.PI;
-                const angleR = Math.atan2(dyR, dxR) * 180 / Math.PI;
-                
-                const dtL = Math.max(1, leftInput.t1 - leftInput.t0);
-                const dtR = Math.max(1, rightInput.t1 - rightInput.t0);
-                
                 const vL = dL / dtL;
                 const vR = dR / dtR;
-                
-                // 룰 1: 화면 양 끝 20% 영역 안에 도달했는지 확인
+
+                // 2-1. 최소 영역 이상 쪼개었는가? (양 끝 20% 도달 여부)
                 const leftMargin = screenW * 0.20;
                 const rightMargin = screenW * 0.80;
                 
                 if (leftInput.x1 > leftMargin || rightInput.x1 < rightMargin) {
-                    return { isValid: false, message: "아직 완전히 쪼개지지 않았습니다.\n화면 양 끝에 닿을 때까지 당겨주세요." };
+                    return { isValid: false, message: "아직 완전히 쪼개지지 않았습니다.\n양쪽 끝 녹색 영역에 닿을 때까지 당겨주세요." };
                 }
                 
-                // 룰 2: 거리가 멀다고 실격시키지 않고, 오직 '속도'로만 부러짐 판정
-                const BREAK_V = 3.5; 
+                // 파손 판정 (너무 확 잡아채면 부러짐)
+                const BREAK_V = 4.0; // 속도 한계치 상향 조절
                 let brokenSide = 'NONE';
                 if (vL > BREAK_V && vR > BREAK_V) brokenSide = 'BOTH';
                 else if (vL > BREAK_V) brokenSide = 'LEFT';
                 else if (vR > BREAK_V) brokenSide = 'RIGHT';
                 
-                const timeDiffMs = Math.abs(leftInput.t1 - rightInput.t1);
-                const metrics = { dL, dR, angleL, angleR, vL, vR, timeDiffMs };
+                const metrics = { dL, dR, vL, vR, timeDiffMs: Math.abs(leftInput.t1 - rightInput.t1) };
 
                 if (brokenSide !== 'NONE') {
                     return {
@@ -79,20 +77,18 @@
                     };
                 }
                 
-                const E_dist = Math.abs(dL - dR) / Math.max(dL, dR);
-                const E_angle = Math.abs(angleL + angleR - 180) / 180;
-                const E_time = Math.min(1.0, timeDiffMs / 100);
+                // 2-2. 정확히 반반인가? (속도(당기는 힘)의 균형으로 판정)
+                let vDiff = (vL - vR) / Math.max(vL, vR); // -1.0 ~ 1.0 (0에 가까울수록 균형)
+                if (isNaN(vDiff)) vDiff = 0;
                 
-                let S = 100.00 * (1 - (0.45 * E_dist + 0.35 * E_angle + 0.20 * E_time));
-                S = Number(Math.max(0, S).toFixed(2));
-                
-                const forceL = dL * vL;
-                const forceR = dR * vR;
-                let Bias = (forceL - forceR) / (forceL + forceR);
-                if (isNaN(Bias)) Bias = 0;
-                
-                const leftRatio = Number((50.00 + (Bias * 40.00)).toFixed(2));
+                // 균형 차이에 따라 기준점(50%)에서 최대 20%까지 변동 발생
+                const leftRatio = Number((50.00 + (vDiff * 20.00)).toFixed(2));
                 const rightRatio = Number((100.00 - leftRatio).toFixed(2));
+                
+                // 50:50에서 벗어난 오차에 비례하여 점수 차감 (1% 차이당 5점 감점)
+                const diffFrom50 = Math.abs(50.00 - leftRatio);
+                let S = 100.00 - (diffFrom50 * 5.0); 
+                S = Number(Math.max(0, S).toFixed(2));
                 
                 return {
                     isValid: true, isBroken: false, brokenSide: 'NONE',
@@ -133,7 +129,7 @@
             updateDimensions() {
                 this.midX = window.innerWidth / 2;
                 this.cy = window.innerHeight / 2 - 80; 
-                this.targetDist = this.midX * 0.8; // 연출을 위한 가상의 도달 목표 거리
+                this.targetDist = this.midX * 0.8; 
             }
             
             onTouchStart(e) {
@@ -209,14 +205,12 @@
                     if (this.inputs.left) vL = dL / Math.max(1, this.inputs.left.t1 - this.inputs.left.t0);
                     if (this.inputs.right) vR = dR / Math.max(1, this.inputs.right.t1 - this.inputs.right.t0);
                     
-                    // 실시간 이동 중 너무 확 당기면 즉시 부러짐
-                    const BREAK_V = 3.5;
+                    const BREAK_V = 4.0;
                     if (vL > BREAK_V || vR > BREAK_V) realtimeSnap = true;
                     
                     const lAngle = Math.min(dL / this.targetDist, 1.0) * (Math.PI / 8); 
                     const rAngle = Math.min(dR / this.targetDist, 1.0) * (Math.PI / 8);
                     
-                    // 위험도(Stress) 게이지는 속도 기준으로 변경하여 시각적 피드백 제공
                     const stress = Math.min(1.0, Math.max(vL, vR) / BREAK_V);
                     
                     this.store.update({
@@ -287,8 +281,33 @@
                 const w = this.canvas.width, h = this.canvas.height;
                 const ctx = this.ctx;
                 
+                // 배경
                 ctx.fillStyle = '#fce4ec'; 
                 ctx.fillRect(0, 0, w, h);
+                
+                // 1. 도달 목표 영역 시각화 (양 끝 20% 녹색 가이드)
+                const margin = w * 0.20;
+                ctx.fillStyle = 'rgba(46, 204, 113, 0.15)';
+                ctx.fillRect(0, 0, margin, h); // 왼쪽 영역
+                ctx.fillRect(w - margin, 0, margin, h); // 오른쪽 영역
+                
+                ctx.fillStyle = 'rgba(46, 204, 113, 0.4)';
+                ctx.font = '14px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText("도달 영역", margin/2, 50);
+                ctx.fillText("도달 영역", w - margin/2, 50);
+
+                // 2. 정확한 절반(50:50) 기준선 시각화
+                ctx.save();
+                ctx.setLineDash([10, 10]);
+                ctx.beginPath();
+                ctx.moveTo(w/2, 0);
+                ctx.lineTo(w/2, h);
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.restore();
+
                 this.updateUI(state);
                 
                 const cx = w / 2;
@@ -339,7 +358,6 @@
                     drawHalf(false, rAngle, 50);
                 }
                 
-                // 과부하 경고를 속도에 연동시켜 실시간 피드백
                 if (state.phase === 'SWIPING' && state.stressLevel > 0.7) {
                     ctx.restore();
                     ctx.strokeStyle = `rgba(255, 0, 0, ${(state.stressLevel - 0.7)*3})`;
@@ -384,7 +402,7 @@
                     
                     const m = state.result.metrics;
                     if(m) {
-                        this.ui.debug.innerHTML = `dL: ${m.dL.toFixed(1)} | dR: ${m.dR.toFixed(1)}<br>vL: ${m.vL.toFixed(2)} | vR: ${m.vR.toFixed(2)}<br>angL: ${m.angleL.toFixed(1)} | angR: ${m.angleR.toFixed(1)}<br>timeDiff: ${m.timeDiffMs.toFixed(0)}ms`;
+                        this.ui.debug.innerHTML = `vL: ${m.vL.toFixed(2)} | vR: ${m.vR.toFixed(2)}<br>timeDiff: ${m.timeDiffMs.toFixed(0)}ms`;
                     }
                     this.ui.btn.style.display = 'block';
                 }
