@@ -50,9 +50,6 @@
             evaluate: function(leftInput, rightInput) {
                 const screenW = window.innerWidth;
                 
-                const dtL = Math.max(1, leftInput.t1 - leftInput.t0);
-                const dtR = Math.max(1, rightInput.t1 - rightInput.t0);
-                
                 const dxL = leftInput.x1 - leftInput.x0;
                 const dyL = leftInput.y1 - leftInput.y0;
                 const dxR = rightInput.x1 - rightInput.x0;
@@ -61,8 +58,12 @@
                 const dL = Math.sqrt(dxL*dxL + dyL*dyL);
                 const dR = Math.sqrt(dxR*dxR + dyR*dyR);
                 
-                const vL = dL / dtL;
-                const vR = dR / dtR;
+                const angleL = Math.atan2(dyL, dxL) * 180 / Math.PI;
+                const angleR = Math.atan2(dyR, dxR) * 180 / Math.PI;
+                
+                // 꼼수 방지: 찰나의 최고 속도(max_v)를 판정 기준으로 사용
+                const vL = leftInput.max_v;
+                const vR = rightInput.max_v;
 
                 const leftMargin = screenW * 0.20;
                 const rightMargin = screenW * 0.80;
@@ -71,13 +72,15 @@
                     return { isValid: false, message: "아직 완전히 쪼개지지 않았습니다.\n양쪽 끝 녹색 영역에 닿을 때까지 당겨주세요." };
                 }
                 
-                const BREAK_V = 4.0;
+                // 순간 최고속도 임계치 설정 (2.5px/ms 넘으면 파손)
+                const BREAK_V = 2.5;
                 let brokenSide = 'NONE';
                 if (vL > BREAK_V && vR > BREAK_V) brokenSide = 'BOTH';
                 else if (vL > BREAK_V) brokenSide = 'LEFT';
                 else if (vR > BREAK_V) brokenSide = 'RIGHT';
                 
-                const metrics = { dL, dR, vL, vR, timeDiffMs: Math.abs(leftInput.t1 - rightInput.t1) };
+                const timeDiffMs = Math.abs(leftInput.t1 - rightInput.t1);
+                const metrics = { dL, dR, angleL, angleR, vL, vR, timeDiffMs };
 
                 if (brokenSide !== 'NONE') {
                     return {
@@ -160,7 +163,9 @@
                     const isLeft = t.clientX < this.midX;
                     const inputObj = {
                         id: t.identifier, x0: t.clientX, y0: t.clientY, x1: t.clientX, y1: t.clientY,
-                        t0: performance.now(), t1: performance.now(), max_d: 0 
+                        t0: performance.now(), t1: performance.now(), max_d: 0,
+                        // 순간 속도 측정을 위한 변수 추가
+                        last_x: t.clientX, last_y: t.clientY, last_t: performance.now(), max_v: 0 
                     };
                     
                     if (isLeft) {
@@ -194,6 +199,17 @@
                         if (curr_d > this.inputs.left.max_d) {
                             this.inputs.left.max_d = curr_d; this.inputs.left.x1 = t.clientX; this.inputs.left.y1 = t.clientY; this.inputs.left.t1 = now; moved = true;
                         } else if (this.inputs.left.max_d - curr_d > 15) tensionLoss = true;
+                        
+                        // 20ms 이상 경과 시 순간 속도 갱신 (미세 떨림 필터링)
+                        const dt = now - this.inputs.left.last_t;
+                        if (dt >= 20) {
+                            const dd = Math.hypot(t.clientX - this.inputs.left.last_x, t.clientY - this.inputs.left.last_y);
+                            const current_v = dd / dt;
+                            if (current_v > this.inputs.left.max_v) this.inputs.left.max_v = current_v;
+                            this.inputs.left.last_x = t.clientX;
+                            this.inputs.left.last_y = t.clientY;
+                            this.inputs.left.last_t = now;
+                        }
                     }
                     if (this.inputs.right && t.identifier === this.inputs.right.id) {
                         if (t.clientX < this.midX) crossCenter = true;
@@ -201,6 +217,16 @@
                         if (curr_d > this.inputs.right.max_d) {
                             this.inputs.right.max_d = curr_d; this.inputs.right.x1 = t.clientX; this.inputs.right.y1 = t.clientY; this.inputs.right.t1 = now; moved = true;
                         } else if (this.inputs.right.max_d - curr_d > 15) tensionLoss = true;
+                        
+                        const dt = now - this.inputs.right.last_t;
+                        if (dt >= 20) {
+                            const dd = Math.hypot(t.clientX - this.inputs.right.last_x, t.clientY - this.inputs.right.last_y);
+                            const current_v = dd / dt;
+                            if (current_v > this.inputs.right.max_v) this.inputs.right.max_v = current_v;
+                            this.inputs.right.last_x = t.clientX;
+                            this.inputs.right.last_y = t.clientY;
+                            this.inputs.right.last_t = now;
+                        }
                     }
                 }
                 
@@ -210,11 +236,10 @@
                     const dL = this.inputs.left ? this.inputs.left.max_d : 0;
                     const dR = this.inputs.right ? this.inputs.right.max_d : 0;
                     
-                    let vL = 0, vR = 0;
-                    if (this.inputs.left) vL = dL / Math.max(1, this.inputs.left.t1 - this.inputs.left.t0);
-                    if (this.inputs.right) vR = dR / Math.max(1, this.inputs.right.t1 - this.inputs.right.t0);
+                    const vL = this.inputs.left ? this.inputs.left.max_v : 0;
+                    const vR = this.inputs.right ? this.inputs.right.max_v : 0;
                     
-                    const BREAK_V = 4.0;
+                    const BREAK_V = 2.5;
                     if (vL > BREAK_V || vR > BREAK_V) realtimeSnap = true;
                     
                     const lAngle = Math.min(dL / this.targetDist, 1.0) * (Math.PI / 6);
@@ -298,21 +323,19 @@
                 this.geoLeftNorm = this.createDynamicGeo(0, true);
                 this.geoRightNorm = this.createDynamicGeo(0, false);
 
-                // 첨부해주신 사진과 똑같은 형태의 대참사(L자 모양 뜯김) Shape 재현
                 const shapeLeftFail = new THREE.Shape();
                 shapeLeftFail.moveTo(0, -1.8); 
                 shapeLeftFail.lineTo(-0.6, -1.8); 
                 shapeLeftFail.quadraticCurveTo(-0.9, -1.8, -0.9, -1.5); 
                 shapeLeftFail.lineTo(-0.9, 1.5); 
                 shapeLeftFail.quadraticCurveTo(-0.9, 1.8, -0.6, 1.8); 
-                shapeLeftFail.lineTo(0.6, 1.8); // 상단 전부 다 가져감
+                shapeLeftFail.lineTo(0.6, 1.8); 
                 shapeLeftFail.quadraticCurveTo(0.9, 1.8, 0.9, 1.5); 
                 shapeLeftFail.lineTo(0.9, -0.2); 
-                // 거칠게 대각선으로 뜯겨진 중앙 파단면
                 shapeLeftFail.lineTo(0.5, 0.0); 
                 shapeLeftFail.lineTo(0.2, -0.4); 
                 shapeLeftFail.lineTo(0, -0.8); 
-                shapeLeftFail.lineTo(0, -1.8); // 하단 홈으로 귀결
+                shapeLeftFail.lineTo(0, -1.8); 
 
                 const shapeRightFail = new THREE.Shape();
                 shapeRightFail.moveTo(0, -1.8); 
@@ -378,17 +401,15 @@
                 this.renderState(this.store.state);
             }
 
-            // 개선된 동적 생성 함수: 하단 중앙 홈(0,-1.8)에서 사선으로 균열이 발생하도록 처리
             createDynamicGeo(topCutX, isLeft) {
                 const shape = new THREE.Shape();
                 if (isLeft) {
-                    shape.moveTo(0, -1.8); // 무조건 하단 중앙 홈에서 시작
+                    shape.moveTo(0, -1.8); 
                     shape.lineTo(-0.6, -1.8); 
                     shape.quadraticCurveTo(-0.9, -1.8, -0.9, -1.5); 
                     shape.lineTo(-0.9, 1.5); 
                     shape.quadraticCurveTo(-0.9, 1.8, -0.6, 1.8); 
                     shape.lineTo(topCutX, 1.8); 
-                    // 중앙 홈으로 내려가는 사선 찢어짐 효과
                     shape.lineTo(topCutX * 0.8, 0.8);
                     shape.lineTo(topCutX * 0.4, 0.0);
                     shape.lineTo(topCutX * 0.1, -0.8);
@@ -434,17 +455,14 @@
                 } 
                 else if (state.phase === 'RESULT' && state.result) {
                     if (state.result.isBroken) {
-                        // 대참사 파단면 적용
                         this.leftChoc.geometry = this.geoLeftFail;
                         this.rightChoc.geometry = this.geoRightFail;
                         
-                        // 부러진 후에는 물리적으로 불균형하게 비틀기
                         this.leftPivot.position.set(-1.0, 1.8, 0);
                         this.leftPivot.rotation.z = -0.3; 
                         this.rightPivot.position.set(1.0, 0.5, 0);
                         this.rightPivot.rotation.z = -1.0; 
                     } else {
-                        // 결과 비율에 맞춰 사선 찢어짐 동적 생성 (최대 ±0.6까지 기울어짐)
                         const topCutX = ((state.result.leftRatio - 50) / 50) * 1.5;
                         const safeCutX = Math.max(-0.6, Math.min(0.6, topCutX));
                         this.leftChoc.geometry = this.createDynamicGeo(safeCutX, true);
@@ -490,7 +508,7 @@
                     
                     const m = state.result.metrics;
                     if(m) {
-                        ui.debug.innerHTML = `vL: ${m.vL.toFixed(2)} | vR: ${m.vR.toFixed(2)}<br>timeDiff: ${m.timeDiffMs.toFixed(0)}ms`;
+                        ui.debug.innerHTML = `Peak vL: ${m.vL.toFixed(2)} | Peak vR: ${m.vR.toFixed(2)}<br>timeDiff: ${m.timeDiffMs.toFixed(0)}ms`;
                     }
                     ui.btn.style.display = 'block';
                 }
