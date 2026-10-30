@@ -61,7 +61,6 @@
                 const angleL = Math.atan2(dyL, dxL) * 180 / Math.PI;
                 const angleR = Math.atan2(dyR, dxR) * 180 / Math.PI;
                 
-                // 꼼수 방지: 찰나의 최고 속도(max_v)를 판정 기준으로 사용
                 const vL = leftInput.max_v;
                 const vR = rightInput.max_v;
 
@@ -72,7 +71,6 @@
                     return { isValid: false, message: "아직 완전히 쪼개지지 않았습니다.\n양쪽 끝 녹색 영역에 닿을 때까지 당겨주세요." };
                 }
                 
-                // 순간 최고속도 임계치 설정 (2.5px/ms 넘으면 파손)
                 const BREAK_V = 2.5;
                 let brokenSide = 'NONE';
                 if (vL > BREAK_V && vR > BREAK_V) brokenSide = 'BOTH';
@@ -164,7 +162,6 @@
                     const inputObj = {
                         id: t.identifier, x0: t.clientX, y0: t.clientY, x1: t.clientX, y1: t.clientY,
                         t0: performance.now(), t1: performance.now(), max_d: 0,
-                        // 순간 속도 측정을 위한 변수 추가
                         last_x: t.clientX, last_y: t.clientY, last_t: performance.now(), max_v: 0 
                     };
                     
@@ -200,7 +197,6 @@
                             this.inputs.left.max_d = curr_d; this.inputs.left.x1 = t.clientX; this.inputs.left.y1 = t.clientY; this.inputs.left.t1 = now; moved = true;
                         } else if (this.inputs.left.max_d - curr_d > 15) tensionLoss = true;
                         
-                        // 20ms 이상 경과 시 순간 속도 갱신 (미세 떨림 필터링)
                         const dt = now - this.inputs.left.last_t;
                         if (dt >= 20) {
                             const dd = Math.hypot(t.clientX - this.inputs.left.last_x, t.clientY - this.inputs.left.last_y);
@@ -289,6 +285,7 @@
             }
         }
 
+        // --- 4. 3D 렌더러 (A안: 테트리스 챔퍼 블록 조립형 & 결과 시점 입체 회전) ---
         class RendererAdapter {
             constructor(store) {
                 this.store = store;
@@ -304,57 +301,70 @@
                 
                 this.scene = new THREE.Scene();
                 this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-                this.camera.position.set(0, -1, 9);
+                this.camera.position.set(0, -0.8, 9.5);
                 
-                const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); 
+                // 3점 조명: 테트리스 블록의 각진 면(윗면/앞면/옆면) 명암 대비가 뚜렷하도록 세팅
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.55); 
                 this.scene.add(ambientLight);
-                const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2); 
-                directionalLight.position.set(5, 5, 4);
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 1.4); 
+                directionalLight.position.set(6, 8, 5);
                 this.scene.add(directionalLight);
-                const rimLight = new THREE.PointLight(0xffffff, 0.8); 
-                rimLight.position.set(-3, -2, -5);
+                const rimLight = new THREE.PointLight(0xffffff, 0.9); 
+                rimLight.position.set(-5, -3, -5);
                 this.scene.add(rimLight);
 
-                this.chocMat = new THREE.MeshPhysicalMaterial({ color: 0x3B1E10, roughness: 0.35, metalness: 0.05, clearcoat: 0.15, clearcoatRoughness: 0.2 });
-                this.woodMat = new THREE.MeshStandardMaterial({ color: 0xE8D5B5, roughness: 0.8 });
+                // FlatShading을 활성화하여 각진 챔퍼 모서리가 칼각으로 살아나도록 설정
+                this.chocMat = new THREE.MeshPhysicalMaterial({ 
+                    color: 0x4A2511, 
+                    roughness: 0.35, 
+                    metalness: 0.05, 
+                    clearcoat: 0.2, 
+                    clearcoatRoughness: 0.2,
+                    flatShading: true 
+                });
+                this.woodMat = new THREE.MeshStandardMaterial({ 
+                    color: 0xE8D5B5, 
+                    roughness: 0.8,
+                    flatShading: true
+                });
 
-                this.extrudeSettings = { depth: 0.5, bevelEnabled: true, bevelSegments: 4, bevelSteps: 2, bevelSize: 0.08, bevelThickness: 0.08 };
+                // 1) 테트리스 스타일 단일 챔퍼(칼각 모따기) 블록 생성 (가로 0.9 x 세로 0.6 x 두께 0.8)
+                const bW = 0.78, bH = 0.48, bevel = 0.06;
+                const blockShape = new THREE.Shape();
+                blockShape.moveTo(-bW/2, -bH/2);
+                blockShape.lineTo(bW/2, -bH/2);
+                blockShape.lineTo(bW/2, bH/2);
+                blockShape.lineTo(-bW/2, bH/2);
+                blockShape.closePath();
 
-                this.geoLeftNorm = this.createDynamicGeo(0, true);
-                this.geoRightNorm = this.createDynamicGeo(0, false);
+                const blockExtrude = {
+                    depth: 0.68,
+                    bevelEnabled: true,
+                    bevelSegments: 1, // 둥근 곡선이 아닌 1단 45도 칼각 챔퍼
+                    steps: 1,
+                    bevelSize: bevel,
+                    bevelThickness: bevel
+                };
+                this.unitBlockGeo = new THREE.ExtrudeGeometry(blockShape, blockExtrude);
+                this.unitBlockGeo.center();
+                this.unitBlockGeo.computeVertexNormals();
 
-                const shapeLeftFail = new THREE.Shape();
-                shapeLeftFail.moveTo(0, -1.8); 
-                shapeLeftFail.lineTo(-0.6, -1.8); 
-                shapeLeftFail.quadraticCurveTo(-0.9, -1.8, -0.9, -1.5); 
-                shapeLeftFail.lineTo(-0.9, 1.5); 
-                shapeLeftFail.quadraticCurveTo(-0.9, 1.8, -0.6, 1.8); 
-                shapeLeftFail.lineTo(0.6, 1.8); 
-                shapeLeftFail.quadraticCurveTo(0.9, 1.8, 0.9, 1.5); 
-                shapeLeftFail.lineTo(0.9, -0.2); 
-                shapeLeftFail.lineTo(0.5, 0.0); 
-                shapeLeftFail.lineTo(0.2, -0.4); 
-                shapeLeftFail.lineTo(0, -0.8); 
-                shapeLeftFail.lineTo(0, -1.8); 
+                // 2) 나무 막대기 챔퍼 지오메트리
+                const sW = 0.22, sH = 1.4, sBevel = 0.03;
+                const stickShape = new THREE.Shape();
+                stickShape.moveTo(-sW/2, -sH/2);
+                stickShape.lineTo(sW/2, -sH/2);
+                stickShape.lineTo(sW/2, sH/2);
+                stickShape.lineTo(-sW/2, sH/2);
+                stickShape.closePath();
+                const stickGeo = new THREE.ExtrudeGeometry(stickShape, {
+                    depth: 0.12, bevelEnabled: true, bevelSegments: 1, steps: 1, bevelSize: sBevel, bevelThickness: sBevel
+                });
+                stickGeo.center();
+                stickGeo.translate(0, -sH/2, 0);
+                stickGeo.computeVertexNormals();
 
-                const shapeRightFail = new THREE.Shape();
-                shapeRightFail.moveTo(0, -1.8); 
-                shapeRightFail.lineTo(0, -0.8); 
-                shapeRightFail.lineTo(0.2, -0.4); 
-                shapeRightFail.lineTo(0.5, 0.0); 
-                shapeRightFail.lineTo(0.9, -0.2); 
-                shapeRightFail.lineTo(0.9, -1.5); 
-                shapeRightFail.quadraticCurveTo(0.9, -1.8, 0.6, -1.8); 
-                shapeRightFail.lineTo(0, -1.8);
-
-                this.geoLeftFail = new THREE.ExtrudeGeometry(shapeLeftFail, this.extrudeSettings);
-                this.geoRightFail = new THREE.ExtrudeGeometry(shapeRightFail, this.extrudeSettings);
-
-                [this.geoLeftFail, this.geoRightFail].forEach(geo => geo.translate(0, 0, -0.25));
-
-                const stickGeo = new THREE.BoxGeometry(0.25, 1.5, 0.1);
-                stickGeo.translate(0, -0.75, 0);
-
+                // 피벗 및 그룹 구조 생성
                 this.leftPivot = new THREE.Group();
                 this.rightPivot = new THREE.Group();
                 this.scene.add(this.leftPivot);
@@ -371,17 +381,31 @@
                 this.leftPivot.add(this.leftGroup);
                 this.rightPivot.add(this.rightGroup);
 
-                this.leftChoc = new THREE.Mesh(this.geoLeftNorm, this.chocMat);
-                this.rightChoc = new THREE.Mesh(this.geoRightNorm, this.chocMat);
                 const leftStick = new THREE.Mesh(stickGeo, this.woodMat);
-                leftStick.position.set(-0.45, -1.5, 0);
+                leftStick.position.set(-0.45, -1.7, 0);
                 const rightStick = new THREE.Mesh(stickGeo, this.woodMat);
-                rightStick.position.set(0.45, -1.5, 0);
-
-                this.leftGroup.add(this.leftChoc);
+                rightStick.position.set(0.45, -1.7, 0);
                 this.leftGroup.add(leftStick);
-                this.rightGroup.add(this.rightChoc);
                 this.rightGroup.add(rightStick);
+
+                // 2열 x 6행 = 총 12개의 테트리스 블록 생성 (r=0: 맨 아래, r=5: 맨 위)
+                this.blocks = [];
+                for (let r = 0; r < 6; r++) {
+                    const yPos = -1.5 + r * 0.6;
+                    const meshL = new THREE.Mesh(this.unitBlockGeo, this.chocMat);
+                    meshL.position.set(-0.45, yPos, 0);
+                    this.leftGroup.add(meshL);
+
+                    const meshR = new THREE.Mesh(this.unitBlockGeo, this.chocMat);
+                    meshR.position.set(0.45, yPos, 0);
+                    this.rightGroup.add(meshR);
+
+                    this.blocks.push({ r: r, meshL: meshL, meshR: meshR });
+                }
+
+                // 부드러운 3D 회전 애니메이션을 위한 타겟 상태값
+                this.targetL = { pos: new THREE.Vector3(0, 1.8, 0), rot: new THREE.Euler(0, 0, 0) };
+                this.targetR = { pos: new THREE.Vector3(0, 1.8, 0), rot: new THREE.Euler(0, 0, 0) };
 
                 this.resize();
                 window.addEventListener('resize', this.resize.bind(this));
@@ -393,6 +417,18 @@
                 
                 const animate = () => {
                     requestAnimationFrame(animate);
+                    // 피벗 위치 및 3D 입체 회전 보간 (Lerp)
+                    this.leftPivot.position.lerp(this.targetL.pos, 0.15);
+                    this.rightPivot.position.lerp(this.targetR.pos, 0.15);
+
+                    this.leftPivot.rotation.x += (this.targetL.rot.x - this.leftPivot.rotation.x) * 0.15;
+                    this.leftPivot.rotation.y += (this.targetL.rot.y - this.leftPivot.rotation.y) * 0.15;
+                    this.leftPivot.rotation.z += (this.targetL.rot.z - this.leftPivot.rotation.z) * 0.15;
+
+                    this.rightPivot.rotation.x += (this.targetR.rot.x - this.rightPivot.rotation.x) * 0.15;
+                    this.rightPivot.rotation.y += (this.targetR.rot.y - this.rightPivot.rotation.y) * 0.15;
+                    this.rightPivot.rotation.z += (this.targetR.rot.z - this.rightPivot.rotation.z) * 0.15;
+
                     this.renderer.render(this.scene, this.camera);
                 };
                 animate();
@@ -401,34 +437,38 @@
                 this.renderState(this.store.state);
             }
 
-            createDynamicGeo(topCutX, isLeft) {
-                const shape = new THREE.Shape();
-                if (isLeft) {
-                    shape.moveTo(0, -1.8); 
-                    shape.lineTo(-0.6, -1.8); 
-                    shape.quadraticCurveTo(-0.9, -1.8, -0.9, -1.5); 
-                    shape.lineTo(-0.9, 1.5); 
-                    shape.quadraticCurveTo(-0.9, 1.8, -0.6, 1.8); 
-                    shape.lineTo(topCutX, 1.8); 
-                    shape.lineTo(topCutX * 0.8, 0.8);
-                    shape.lineTo(topCutX * 0.4, 0.0);
-                    shape.lineTo(topCutX * 0.1, -0.8);
-                    shape.lineTo(0, -1.8);
-                } else {
-                    shape.moveTo(0, -1.8); 
-                    shape.lineTo(topCutX * 0.1, -0.8);
-                    shape.lineTo(topCutX * 0.4, 0.0);
-                    shape.lineTo(topCutX * 0.8, 0.8);
-                    shape.lineTo(topCutX, 1.8); 
-                    shape.lineTo(0.6, 1.8); 
-                    shape.quadraticCurveTo(0.9, 1.8, 0.9, 1.5); 
-                    shape.lineTo(0.9, -1.5); 
-                    shape.quadraticCurveTo(0.9, -1.8, 0.6, -1.8); 
-                    shape.lineTo(0, -1.8);
+            // 결과 비율 및 대참사 여부에 따라 12개 블록의 소속(왼쪽 막대 vs 오른쪽 막대)을 직각/계단식으로 재배치
+            assignBlocks(leftRatio, isBroken, brokenSide) {
+                for (let r = 0; r < 6; r++) {
+                    const b = this.blocks[r];
+                    let ownerL = 'LEFT';
+                    let ownerR = 'RIGHT';
+
+                    if (isBroken) {
+                        // 대참사: 한쪽 막대는 맨 아래 2칸만 남고, 반대쪽이 위쪽 4칸 전체를 'ㄱ'자 형태로 뜯어감
+                        if (brokenSide === 'LEFT') {
+                            if (r >= 2) ownerL = 'RIGHT';
+                        } else {
+                            if (r >= 2) ownerR = 'LEFT';
+                        }
+                    } else {
+                        // 비율 불균형 시: 상단 블록부터 칸 단위로 계단식/직각 분리 (맨 아래 r=0은 항상 각자 막대에 고정)
+                        const diff = leftRatio - 50; 
+                        if (diff > 3) {
+                            const stealCount = Math.min(4, Math.round(diff / 4.5));
+                            if (r >= 6 - stealCount) ownerR = 'LEFT';
+                        } else if (diff < -3) {
+                            const stealCount = Math.min(4, Math.round((-diff) / 4.5));
+                            if (r >= 6 - stealCount) ownerL = 'RIGHT';
+                        }
+                    }
+
+                    if (ownerL === 'LEFT') this.leftGroup.add(b.meshL);
+                    else this.rightGroup.add(b.meshL);
+
+                    if (ownerR === 'RIGHT') this.rightGroup.add(b.meshR);
+                    else this.leftGroup.add(b.meshR);
                 }
-                const geo = new THREE.ExtrudeGeometry(shape, this.extrudeSettings);
-                geo.translate(0, 0, -0.25);
-                return geo;
             }
             
             resize() {
@@ -442,36 +482,35 @@
                 this.updateUI(state);
                 
                 if (state.phase === 'IDLE' || state.phase === 'READY') {
-                    if(this.leftChoc.geometry !== this.geoLeftNorm) this.leftChoc.geometry = this.geoLeftNorm;
-                    if(this.rightChoc.geometry !== this.geoRightNorm) this.rightChoc.geometry = this.geoRightNorm;
-                    this.leftPivot.position.set(0, 1.8, 0);
-                    this.leftPivot.rotation.set(0, 0, 0);
-                    this.rightPivot.position.set(0, 1.8, 0);
-                    this.rightPivot.rotation.set(0, 0, 0);
+                    this.assignBlocks(50, false, 'NONE');
+                    // 평소(조작 전)에는 정면 뷰 유지
+                    this.targetL.pos.set(0, 1.8, 0);
+                    this.targetL.rot.set(0, 0, 0);
+                    this.targetR.pos.set(0, 1.8, 0);
+                    this.targetR.rot.set(0, 0, 0);
                 } 
                 else if (state.phase === 'SWIPING') {
-                    this.leftPivot.rotation.z = -(state.leftSpreadAngle || 0);
-                    this.rightPivot.rotation.z = (state.rightSpreadAngle || 0);
+                    // 당기는 중에는 정면에서 벌어짐 각도만 반영
+                    this.targetL.pos.set(0, 1.8, 0);
+                    this.targetL.rot.set(0, 0, -(state.leftSpreadAngle || 0));
+                    this.targetR.pos.set(0, 1.8, 0);
+                    this.targetR.rot.set(0, 0, (state.rightSpreadAngle || 0));
                 } 
                 else if (state.phase === 'RESULT' && state.result) {
                     if (state.result.isBroken) {
-                        this.leftChoc.geometry = this.geoLeftFail;
-                        this.rightChoc.geometry = this.geoRightFail;
-                        
-                        this.leftPivot.position.set(-1.0, 1.8, 0);
-                        this.leftPivot.rotation.z = -0.3; 
-                        this.rightPivot.position.set(1.0, 0.5, 0);
-                        this.rightPivot.rotation.z = -1.0; 
+                        this.assignBlocks(0, true, state.result.brokenSide);
+                        // 쪼개지는 순간 X, Y축으로 회전하여 테트리스 블록의 윗면과 옆면 입체감을 동시에 노출
+                        this.targetL.pos.set(-1.15, 1.7, 0);
+                        this.targetL.rot.set(0.45, 0.55, -0.25); 
+                        this.targetR.pos.set(1.15, 0.8, 0);
+                        this.targetR.rot.set(0.45, -0.55, 0.65); 
                     } else {
-                        const topCutX = ((state.result.leftRatio - 50) / 50) * 1.5;
-                        const safeCutX = Math.max(-0.6, Math.min(0.6, topCutX));
-                        this.leftChoc.geometry = this.createDynamicGeo(safeCutX, true);
-                        this.rightChoc.geometry = this.createDynamicGeo(safeCutX, false);
-                        
-                        this.leftPivot.position.set(-0.8, 1.8, 0);
-                        this.rightPivot.position.set(0.8, 1.8, 0);
-                        this.leftPivot.rotation.z = -0.1;
-                        this.rightPivot.rotation.z = 0.1;
+                        this.assignBlocks(state.result.leftRatio, false, 'NONE');
+                        // 성공 시 양쪽으로 분리되면서 입체 각도(쿼터뷰 느낌)로 회전하여 단면과 두께를 보여줌
+                        this.targetL.pos.set(-1.05, 1.8, 0);
+                        this.targetL.rot.set(0.4, 0.5, -0.15);
+                        this.targetR.pos.set(1.05, 1.8, 0);
+                        this.targetR.rot.set(0.4, -0.5, 0.15);
                     }
                 }
                 
