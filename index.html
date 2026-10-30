@@ -10,20 +10,18 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #fce4ec; font-family: sans-serif; touch-action: none; user-select: none; overscroll-behavior: none; }
-        canvas { display: block; width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1; }
+        canvas { display: block; width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1; touch-action: none; }
         
         #guide-left, #guide-right { position: absolute; top: 0; width: 20%; height: 100%; background: rgba(46, 204, 113, 0.15); pointer-events: none; z-index: 5; border-right: 2px dashed rgba(46, 204, 113, 0.4); display: flex; justify-content: center; align-items: flex-start; padding-top: 50px; color: rgba(46, 204, 113, 0.8); font-weight: bold; }
         #guide-right { right: 0; border-right: none; border-left: 2px dashed rgba(46, 204, 113, 0.4); }
         #guide-center { position: absolute; top: 0; left: 50%; width: 2px; height: 100%; border-left: 2px dashed rgba(0,0,0,0.15); pointer-events: none; z-index: 5; transform: translateX(-50%); }
         #stress-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; box-sizing: border-box; pointer-events: none; z-index: 6; border: 0px solid rgba(255,0,0,0); }
         
-        /* 알림 메시지가 손가락에 가려지지 않도록 상단(15vh)으로 위치 변경 */
         #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: 15vh; box-sizing: border-box; z-index: 10; }
         
         #message { font-size: 20px; font-weight: bold; margin-bottom: 20px; text-align: center; white-space: pre-wrap; line-height: 1.5; background: rgba(255, 255, 255, 0.95); padding: 15px 25px; border-radius: 12px; color: #2c3e50; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 90%; pointer-events: auto; }
         #debug-panel { position: absolute; top: 10px; left: 10px; font-size: 14px; font-family: monospace; color: #00ff00; text-align: left; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 5px; pointer-events: auto; }
         
-        /* 최고 점수 표기 UI 추가 */
         #best-score { position: absolute; top: 10px; right: 10px; font-size: 16px; font-weight: bold; color: #2c3e50; background: rgba(255,255,255,0.9); padding: 8px 12px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); pointer-events: auto; }
 
         #btn-retry { pointer-events: auto; padding: 12px 30px; font-size: 18px; font-weight: bold; background-color: #e74c3c; color: white; border: none; border-radius: 8px; cursor: pointer; display: none; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.1s; z-index: 20; }
@@ -56,24 +54,8 @@
         const SplitMathEngine = {
             evaluate: function(leftInput, rightInput) {
                 const screenW = window.innerWidth;
-                
-                const dtL = Math.max(1, leftInput.t1 - leftInput.t0);
-                const dtR = Math.max(1, rightInput.t1 - rightInput.t0);
-                
-                const dxL = leftInput.x1 - leftInput.x0;
-                const dyL = leftInput.y1 - leftInput.y0;
-                const dxR = rightInput.x1 - rightInput.x0;
-                const dyR = rightInput.y1 - rightInput.y0;
-                
-                const dL = Math.sqrt(dxL*dxL + dyL*dyL);
-                const dR = Math.sqrt(dxR*dxR + dyR*dyR);
-                
-                const angleL = Math.atan2(dyL, dxL) * 180 / Math.PI;
-                const angleR = Math.atan2(dyR, dxR) * 180 / Math.PI;
-                
                 const vL = leftInput.max_v;
                 const vR = rightInput.max_v;
-
                 const leftMargin = screenW * 0.20;
                 const rightMargin = screenW * 0.80;
                 
@@ -88,7 +70,7 @@
                 else if (vR > BREAK_V) brokenSide = 'RIGHT';
                 
                 const timeDiffMs = Math.abs(leftInput.t1 - rightInput.t1);
-                const metrics = { dL, dR, angleL, angleR, vL, vR, timeDiffMs };
+                const metrics = { vL, vR, timeDiffMs };
 
                 if (brokenSide !== 'NONE') {
                     return {
@@ -137,7 +119,8 @@
                 this.updateDimensions();
                 window.addEventListener('resize', this.updateDimensions.bind(this));
                 
-                const touchArea = document.getElementById('ui-layer');
+                // 원인 픽스: 터치 감지 영역을 다시 게임 캔버스로 복구합니다.
+                const touchArea = document.getElementById('gameCanvas');
                 touchArea.addEventListener('touchstart', this.onTouchStart.bind(this), { passive: false });
                 touchArea.addEventListener('touchmove', this.onTouchMove.bind(this), { passive: false });
                 touchArea.addEventListener('touchend', this.onTouchEnd.bind(this), { passive: false });
@@ -149,13 +132,8 @@
                 this.cy = window.innerHeight / 2 - 80; 
                 this.targetDist = this.midX * 0.8; 
             }
-
-            _shouldIgnore(e) {
-                return e.target && (e.target.id === 'btn-retry' || e.target.closest('#btn-retry'));
-            }
             
             onTouchStart(e) {
-                if(this._shouldIgnore(e)) return;
                 e.preventDefault();
                 if (this.store.state.phase === 'RESULT' || this.store.state.phase === 'RESOLVE') return;
                 
@@ -190,7 +168,6 @@
             }
             
             onTouchMove(e) {
-                if(this._shouldIgnore(e)) return;
                 e.preventDefault();
                 if (this.store.state.phase !== 'READY' && this.store.state.phase !== 'SWIPING') return;
                 
@@ -263,7 +240,6 @@
             }
             
             onTouchEnd(e) {
-                if(this._shouldIgnore(e)) return;
                 e.preventDefault();
                 if (this.store.state.phase !== 'READY' && this.store.state.phase !== 'SWIPING') return;
                 
@@ -288,7 +264,6 @@
 
             triggerAbnormalEnd(msg) {
                 this.store.update({ phase: 'RESOLVE', result: { isValid: false, message: msg } });
-                // 대기 시간 단축 (1500ms -> 700ms)
                 setTimeout(() => {
                     this.inputs = { left: null, right: null };
                     this.store.reset();
@@ -299,7 +274,7 @@
         class RendererAdapter {
             constructor(store) {
                 this.store = store;
-                this.bestScore = 0; // 최고 점수 상태 추가
+                this.bestScore = 0; 
                 this.ui = { 
                     msg: document.getElementById('message'), 
                     btn: document.getElementById('btn-retry'), 
@@ -392,10 +367,14 @@
                 this.resize();
                 window.addEventListener('resize', this.resize.bind(this));
                 
-                this.ui.btn.addEventListener('click', (e) => {
+                // 다시하기 버튼 터치 및 클릭 이벤트 복구
+                const onRetry = (e) => {
+                    e.preventDefault();
                     e.stopPropagation();
                     this.store.reset();
-                });
+                };
+                this.ui.btn.addEventListener('touchstart', onRetry, { passive: false });
+                this.ui.btn.addEventListener('click', onRetry);
                 
                 const animate = () => {
                     requestAnimationFrame(animate);
