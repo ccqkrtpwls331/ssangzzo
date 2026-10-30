@@ -11,6 +11,13 @@
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #fce4ec; font-family: sans-serif; touch-action: none; user-select: none; overscroll-behavior: none; }
         canvas { display: block; width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1; }
+        
+        /* UI 및 가이드라인 레이어 */
+        #guide-left, #guide-right { position: absolute; top: 0; width: 20%; height: 100%; background: rgba(46, 204, 113, 0.15); pointer-events: none; z-index: 5; border-right: 2px dashed rgba(46, 204, 113, 0.4); display: flex; justify-content: center; align-items: flex-start; padding-top: 50px; color: rgba(46, 204, 113, 0.8); font-weight: bold; }
+        #guide-right { right: 0; border-right: none; border-left: 2px dashed rgba(46, 204, 113, 0.4); }
+        #guide-center { position: absolute; top: 0; left: 50%; width: 2px; height: 100%; border-left: 2px dashed rgba(0,0,0,0.15); pointer-events: none; z-index: 5; transform: translateX(-50%); }
+        #stress-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; box-sizing: border-box; pointer-events: none; z-index: 6; border: 0px solid rgba(255,0,0,0); }
+        
         #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding-bottom: 80px; box-sizing: border-box; z-index: 10; }
         #message { font-size: 20px; font-weight: bold; margin-bottom: 20px; text-align: center; white-space: pre-wrap; line-height: 1.5; background: rgba(255, 255, 255, 0.95); padding: 15px 25px; border-radius: 12px; color: #2c3e50; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 90%; pointer-events: auto; }
         #debug-panel { position: absolute; top: 10px; left: 10px; font-size: 14px; font-family: monospace; color: #00ff00; text-align: left; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 5px; pointer-events: auto; }
@@ -19,12 +26,20 @@
     </style>
 </head>
 <body>
+    <div id="guide-left">도달 영역</div>
+    <div id="guide-center"></div>
+    <div id="guide-right">도달 영역</div>
+    <div id="stress-overlay"></div>
+    
     <canvas id="gameCanvas"></canvas>
     <div id="ui-layer">
         <div id="debug-panel"></div>
         <div id="message">아래쪽 나무 막대를 각각 잡으세요\n(초콜릿 부분 터치 금지)</div>
         <button id="btn-retry">다시 하기</button>
     </div>
+
+    <!-- Three.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
     <script>
         if ('serviceWorker' in navigator) {
@@ -37,7 +52,6 @@
             evaluate: function(leftInput, rightInput) {
                 const screenW = window.innerWidth;
                 
-                // 이동 시간 및 거리 계산
                 const dtL = Math.max(1, leftInput.t1 - leftInput.t0);
                 const dtR = Math.max(1, rightInput.t1 - rightInput.t0);
                 
@@ -52,7 +66,6 @@
                 const vL = dL / dtL;
                 const vR = dR / dtR;
 
-                // 2-1. 최소 영역 이상 쪼개었는가? (양 끝 20% 도달 여부)
                 const leftMargin = screenW * 0.20;
                 const rightMargin = screenW * 0.80;
                 
@@ -60,8 +73,7 @@
                     return { isValid: false, message: "아직 완전히 쪼개지지 않았습니다.\n양쪽 끝 녹색 영역에 닿을 때까지 당겨주세요." };
                 }
                 
-                // 파손 판정 (너무 확 잡아채면 부러짐)
-                const BREAK_V = 4.0; // 속도 한계치 상향 조절
+                const BREAK_V = 4.0;
                 let brokenSide = 'NONE';
                 if (vL > BREAK_V && vR > BREAK_V) brokenSide = 'BOTH';
                 else if (vL > BREAK_V) brokenSide = 'LEFT';
@@ -77,15 +89,12 @@
                     };
                 }
                 
-                // 2-2. 정확히 반반인가? (속도(당기는 힘)의 균형으로 판정)
-                let vDiff = (vL - vR) / Math.max(vL, vR); // -1.0 ~ 1.0 (0에 가까울수록 균형)
+                let vDiff = (vL - vR) / Math.max(vL, vR); 
                 if (isNaN(vDiff)) vDiff = 0;
                 
-                // 균형 차이에 따라 기준점(50%)에서 최대 20%까지 변동 발생
                 const leftRatio = Number((50.00 + (vDiff * 20.00)).toFixed(2));
                 const rightRatio = Number((100.00 - leftRatio).toFixed(2));
                 
-                // 50:50에서 벗어난 오차에 비례하여 점수 차감 (1% 차이당 5점 감점)
                 const diffFrom50 = Math.abs(50.00 - leftRatio);
                 let S = 100.00 - (diffFrom50 * 5.0); 
                 S = Number(Math.max(0, S).toFixed(2));
@@ -100,13 +109,13 @@
 
         class GameStateStore {
             constructor() {
-                this.state = { phase: 'IDLE', leftSpreadAngle: 0.0, rightSpreadAngle: 0.0, crackProgress: 0.0, stressLevel: 0.0, leftTouchPos: null, rightTouchPos: null, result: null };
+                this.state = { phase: 'IDLE', leftSpreadAngle: 0.0, rightSpreadAngle: 0.0, stressLevel: 0.0, leftTouchPos: null, rightTouchPos: null, result: null };
                 this.listeners = [];
             }
             subscribe(listener) { this.listeners.push(listener); }
             update(newState) { this.state = { ...this.state, ...newState }; this.notify(); }
             notify() { this.listeners.forEach(l => l(this.state)); }
-            reset() { this.update({ phase: 'IDLE', leftSpreadAngle: 0.0, rightSpreadAngle: 0.0, crackProgress: 0.0, stressLevel: 0.0, leftTouchPos: null, rightTouchPos: null, result: null }); }
+            reset() { this.update({ phase: 'IDLE', leftSpreadAngle: 0.0, rightSpreadAngle: 0.0, stressLevel: 0.0, leftTouchPos: null, rightTouchPos: null, result: null }); }
         }
 
         const store = new GameStateStore();
@@ -119,11 +128,12 @@
                 this.updateDimensions();
                 window.addEventListener('resize', this.updateDimensions.bind(this));
                 
-                const canvas = document.getElementById('gameCanvas');
-                canvas.addEventListener('touchstart', this.onTouchStart.bind(this), { passive: false });
-                canvas.addEventListener('touchmove', this.onTouchMove.bind(this), { passive: false });
-                canvas.addEventListener('touchend', this.onTouchEnd.bind(this), { passive: false });
-                canvas.addEventListener('touchcancel', this.onTouchEnd.bind(this), { passive: false });
+                // 터치 이벤트는 투명한 ui-layer 영역 전체에서 잡습니다.
+                const touchArea = document.getElementById('ui-layer');
+                touchArea.addEventListener('touchstart', this.onTouchStart.bind(this), { passive: false });
+                touchArea.addEventListener('touchmove', this.onTouchMove.bind(this), { passive: false });
+                touchArea.addEventListener('touchend', this.onTouchEnd.bind(this), { passive: false });
+                touchArea.addEventListener('touchcancel', this.onTouchEnd.bind(this), { passive: false });
             }
             
             updateDimensions() {
@@ -133,6 +143,7 @@
             }
             
             onTouchStart(e) {
+                if(e.target.id === 'btn-retry') return; // 리트라이 버튼 클릭 방해 금지
                 e.preventDefault();
                 if (this.store.state.phase === 'RESULT' || this.store.state.phase === 'RESOLVE') return;
                 
@@ -162,9 +173,7 @@
                 
                 if (this.inputs.left && this.inputs.right && this.store.state.phase === 'IDLE') {
                     this.store.update({
-                        phase: 'READY',
-                        leftTouchPos: { x: this.inputs.left.x1, y: this.inputs.left.y1 },
-                        rightTouchPos: { x: this.inputs.right.x1, y: this.inputs.right.y1 }
+                        phase: 'READY'
                     });
                 }
             }
@@ -208,15 +217,13 @@
                     const BREAK_V = 4.0;
                     if (vL > BREAK_V || vR > BREAK_V) realtimeSnap = true;
                     
-                    const lAngle = Math.min(dL / this.targetDist, 1.0) * (Math.PI / 8); 
-                    const rAngle = Math.min(dR / this.targetDist, 1.0) * (Math.PI / 8);
+                    const lAngle = Math.min(dL / this.targetDist, 1.0) * (Math.PI / 6); // 최대 벌어짐 각도 30도
+                    const rAngle = Math.min(dR / this.targetDist, 1.0) * (Math.PI / 6);
                     
                     const stress = Math.min(1.0, Math.max(vL, vR) / BREAK_V);
                     
                     this.store.update({
                         phase: 'SWIPING',
-                        leftTouchPos: this.inputs.left ? { x: this.inputs.left.x1, y: this.inputs.left.y1 } : null,
-                        rightTouchPos: this.inputs.right ? { x: this.inputs.right.x1, y: this.inputs.right.y1 } : null,
                         stressLevel: stress, leftSpreadAngle: lAngle, rightSpreadAngle: rAngle
                     });
                     
@@ -256,155 +263,192 @@
             }
         }
 
+        // --- 4. 3D 렌더러 (Three.js 연동) ---
         class RendererAdapter {
             constructor(store) {
-                this.canvas = document.getElementById('gameCanvas');
-                this.ctx = this.canvas.getContext('2d');
                 this.store = store;
+                this.ui = { 
+                    msg: document.getElementById('message'), 
+                    btn: document.getElementById('btn-retry'), 
+                    debug: document.getElementById('debug-panel'),
+                    stress: document.getElementById('stress-overlay')
+                };
                 
-                this.ui = { msg: document.getElementById('message'), btn: document.getElementById('btn-retry'), debug: document.getElementById('debug-panel') };
+                const canvas = document.getElementById('gameCanvas');
+                this.renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
                 
+                this.scene = new THREE.Scene();
+                // 카메라를 살짝 아래로 내려 아이스크림이 위쪽에 렌더링되게 함 (Y 오프셋 효과)
+                this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+                this.camera.position.set(0, -1, 9);
+                
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); 
+                this.scene.add(ambientLight);
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2); 
+                directionalLight.position.set(5, 5, 4);
+                this.scene.add(directionalLight);
+                const rimLight = new THREE.PointLight(0xffffff, 0.8); 
+                rimLight.position.set(-3, -2, -5);
+                this.scene.add(rimLight);
+
+                const chocMat = new THREE.MeshPhysicalMaterial({ color: 0x3B1E10, roughness: 0.35, metalness: 0.05, clearcoat: 0.15, clearcoatRoughness: 0.2 });
+                const woodMat = new THREE.MeshStandardMaterial({ color: 0xE8D5B5, roughness: 0.8 });
+
+                const extrudeSettings = { depth: 0.5, bevelEnabled: true, bevelSegments: 4, bevelSteps: 2, bevelSize: 0.08, bevelThickness: 0.08 };
+
+                // 정상 Shape
+                const shapeLeftNorm = new THREE.Shape();
+                shapeLeftNorm.moveTo(0, -1.8); shapeLeftNorm.lineTo(-0.6, -1.8); shapeLeftNorm.quadraticCurveTo(-0.9, -1.8, -0.9, -1.5); shapeLeftNorm.lineTo(-0.9, 1.5); shapeLeftNorm.quadraticCurveTo(-0.9, 1.8, -0.6, 1.8); shapeLeftNorm.lineTo(0, 1.8); shapeLeftNorm.lineTo(0, -1.8);
+
+                const shapeRightNorm = new THREE.Shape();
+                shapeRightNorm.moveTo(0, -1.8); shapeRightNorm.lineTo(0, 1.8); shapeRightNorm.lineTo(0.6, 1.8); shapeRightNorm.quadraticCurveTo(0.9, 1.8, 0.9, 1.5); shapeRightNorm.lineTo(0.9, -1.5); shapeRightNorm.quadraticCurveTo(0.9, -1.8, 0.6, -1.8); shapeRightNorm.lineTo(0, -1.8);
+
+                // 파손(망함) Shape
+                const shapeLeftFail = new THREE.Shape();
+                shapeLeftFail.moveTo(0, -1.8); shapeLeftFail.lineTo(-0.6, -1.8); shapeLeftFail.quadraticCurveTo(-0.9, -1.8, -0.9, -1.5); shapeLeftFail.lineTo(-0.9, 1.5); shapeLeftFail.quadraticCurveTo(-0.9, 1.8, -0.6, 1.8); shapeLeftFail.lineTo(0.6, 1.8); shapeLeftFail.quadraticCurveTo(0.9, 1.8, 0.9, 1.5); shapeLeftFail.lineTo(0.9, 0.2); shapeLeftFail.lineTo(0.5, 0.0); shapeLeftFail.lineTo(0.3, -0.3); shapeLeftFail.lineTo(0.1, -0.6); shapeLeftFail.lineTo(0, -0.9); shapeLeftFail.lineTo(0, -1.8);
+
+                const shapeRightFail = new THREE.Shape();
+                shapeRightFail.moveTo(0, -1.8); shapeRightFail.lineTo(0, -0.9); shapeRightFail.lineTo(0.1, -0.6); shapeRightFail.lineTo(0.3, -0.3); shapeRightFail.lineTo(0.5, 0.0); shapeRightFail.lineTo(0.9, 0.2); shapeRightFail.lineTo(0.9, -1.5); shapeRightFail.quadraticCurveTo(0.9, -1.8, 0.6, -1.8); shapeRightFail.lineTo(0, -1.8);
+
+                this.geoLeftNorm = new THREE.ExtrudeGeometry(shapeLeftNorm, extrudeSettings);
+                this.geoRightNorm = new THREE.ExtrudeGeometry(shapeRightNorm, extrudeSettings);
+                this.geoLeftFail = new THREE.ExtrudeGeometry(shapeLeftFail, extrudeSettings);
+                this.geoRightFail = new THREE.ExtrudeGeometry(shapeRightFail, extrudeSettings);
+
+                [this.geoLeftNorm, this.geoRightNorm, this.geoLeftFail, this.geoRightFail].forEach(geo => geo.translate(0, 0, -0.25));
+
+                const stickGeo = new THREE.BoxGeometry(0.25, 1.5, 0.1);
+                stickGeo.translate(0, -0.75, 0);
+
+                // 하단(막대 부분)을 기준으로 벌어지도록 Pivot(회전축) 구조 생성
+                this.leftPivot = new THREE.Group();
+                this.rightPivot = new THREE.Group();
+                this.scene.add(this.leftPivot);
+                this.scene.add(this.rightPivot);
+                
+                this.leftPivot.position.set(0, -1.8, 0); // 회전축 Y=-1.8 (막대기 시작점)
+                this.rightPivot.position.set(0, -1.8, 0);
+
+                this.leftGroup = new THREE.Group();
+                this.rightGroup = new THREE.Group();
+                // 피벗에서 원래 위치로 복귀시키기 위한 상단 오프셋
+                this.leftGroup.position.set(0, 1.8, 0);
+                this.rightGroup.position.set(0, 1.8, 0);
+                
+                this.leftPivot.add(this.leftGroup);
+                this.rightPivot.add(this.rightGroup);
+
+                this.leftChoc = new THREE.Mesh(this.geoLeftNorm, chocMat);
+                this.rightChoc = new THREE.Mesh(this.geoRightNorm, chocMat);
+                const leftStick = new THREE.Mesh(stickGeo, woodMat);
+                leftStick.position.set(-0.45, -1.5, 0);
+                const rightStick = new THREE.Mesh(stickGeo, woodMat);
+                rightStick.position.set(0.45, -1.5, 0);
+
+                this.leftGroup.add(this.leftChoc);
+                this.leftGroup.add(leftStick);
+                this.rightGroup.add(this.rightChoc);
+                this.rightGroup.add(rightStick);
+
                 this.resize();
                 window.addEventListener('resize', this.resize.bind(this));
                 this.ui.btn.addEventListener('click', () => this.store.reset());
-                this.store.subscribe(this.render.bind(this));
-                this.render(this.store.state);
+                
+                // 3D 렌더링 루프
+                const animate = () => {
+                    requestAnimationFrame(animate);
+                    this.renderer.render(this.scene, this.camera);
+                };
+                animate();
+
+                this.store.subscribe(this.renderState.bind(this));
+                this.renderState(this.store.state);
             }
             
             resize() {
-                this.canvas.width = window.innerWidth;
-                this.canvas.height = window.innerHeight;
-                this.render(this.store.state);
+                this.camera.aspect = window.innerWidth / window.innerHeight;
+                this.camera.updateProjectionMatrix();
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setPixelRatio(window.devicePixelRatio);
             }
             
-            render(state) {
-                const w = this.canvas.width, h = this.canvas.height;
-                const ctx = this.ctx;
-                
-                // 배경
-                ctx.fillStyle = '#fce4ec'; 
-                ctx.fillRect(0, 0, w, h);
-                
-                // 1. 도달 목표 영역 시각화 (양 끝 20% 녹색 가이드)
-                const margin = w * 0.20;
-                ctx.fillStyle = 'rgba(46, 204, 113, 0.15)';
-                ctx.fillRect(0, 0, margin, h); // 왼쪽 영역
-                ctx.fillRect(w - margin, 0, margin, h); // 오른쪽 영역
-                
-                ctx.fillStyle = 'rgba(46, 204, 113, 0.4)';
-                ctx.font = '14px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText("도달 영역", margin/2, 50);
-                ctx.fillText("도달 영역", w - margin/2, 50);
-
-                // 2. 정확한 절반(50:50) 기준선 시각화
-                ctx.save();
-                ctx.setLineDash([10, 10]);
-                ctx.beginPath();
-                ctx.moveTo(w/2, 0);
-                ctx.lineTo(w/2, h);
-                ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-                ctx.restore();
-
+            renderState(state) {
                 this.updateUI(state);
                 
-                const cx = w / 2;
-                const cy = h / 2 - 80; 
-                const bW = 120, bH = 260;
-                const stickW = 20, stickH = 100;
-                
-                ctx.save();
-                ctx.translate(cx, cy);
-                
-                const drawHalf = (isLeft, angle, ratio, isBroken = false) => {
-                    ctx.save();
-                    ctx.translate(0, -bH / 2);
-                    ctx.rotate(isLeft ? angle : -angle);
-                    ctx.translate(0, bH / 2);
-                    
-                    const rw = bW * (ratio / 100);
-                    const startX = isLeft ? -rw : 0;
-                    
-                    ctx.fillStyle = '#d4a373';
-                    const stickCenterX = isLeft ? -bW/4 : bW/4;
-                    ctx.fillRect(stickCenterX - stickW/2, bH/2, stickW, stickH);
-                    
-                    ctx.fillStyle = isBroken ? '#c0392b' : '#3e2723'; 
-                    ctx.beginPath();
-                    if (typeof ctx.roundRect === 'function') {
-                        if (isLeft) ctx.roundRect(startX, -bH/2, rw, bH, [30, 0, 0, 0]);
-                        else ctx.roundRect(startX, -bH/2, rw, bH, [0, 30, 0, 0]);
-                    } else {
-                        ctx.fillRect(startX, -bH/2, rw, bH);
-                    }
-                    ctx.fill();
-                    ctx.restore();
-                };
-
-                if (state.phase === 'RESULT' && state.result && state.result.isValid) {
+                if (state.phase === 'IDLE' || state.phase === 'READY') {
+                    this.leftChoc.geometry = this.geoLeftNorm;
+                    this.rightChoc.geometry = this.geoRightNorm;
+                    this.leftPivot.position.set(0, -1.8, 0);
+                    this.leftPivot.rotation.set(0, 0, 0);
+                    this.rightPivot.position.set(0, -1.8, 0);
+                    this.rightPivot.rotation.set(0, 0, 0);
+                } 
+                else if (state.phase === 'SWIPING') {
+                    this.leftChoc.geometry = this.geoLeftNorm;
+                    this.rightChoc.geometry = this.geoRightNorm;
+                    this.leftPivot.rotation.z = state.leftSpreadAngle || 0;
+                    this.rightPivot.rotation.z = -(state.rightSpreadAngle || 0);
+                } 
+                else if (state.phase === 'RESULT' && state.result) {
                     if (state.result.isBroken) {
-                        drawHalf(true, 0.5, 50, true);
-                        drawHalf(false, 0.5, 50, true);
+                        this.leftChoc.geometry = this.geoLeftFail;
+                        this.rightChoc.geometry = this.geoRightFail;
+                        
+                        // 부러진 후에는 물리적으로 위치를 비틂
+                        if(state.result.brokenSide === 'LEFT' || state.result.brokenSide === 'BOTH') {
+                            this.leftPivot.position.set(-1.0, -1.5, 0);
+                            this.leftPivot.rotation.z = 0.2;
+                        }
+                        if(state.result.brokenSide === 'RIGHT' || state.result.brokenSide === 'BOTH') {
+                            this.rightPivot.position.set(0.8, -2.3, 0);
+                            this.rightPivot.rotation.z = -0.4;
+                        }
                     } else {
-                        drawHalf(true, 0.15, state.result.leftRatio);
-                        drawHalf(false, 0.15, state.result.rightRatio);
+                        this.leftChoc.geometry = this.geoLeftNorm;
+                        this.rightChoc.geometry = this.geoRightNorm;
+                        
+                        // 결과 비율에 따라 벌어짐 픽스
+                        this.leftPivot.rotation.z = 0.3;
+                        this.rightPivot.rotation.z = -0.3;
                     }
+                }
+                
+                if (state.phase === 'SWIPING' && state.stressLevel > 0.6) {
+                    const intensity = Math.max(0, (state.stressLevel - 0.6) * 30);
+                    this.ui.stress.style.border = `${intensity}px solid rgba(255, 0, 0, 0.4)`;
                 } else {
-                    const lAngle = state.leftSpreadAngle || 0;
-                    const rAngle = state.rightSpreadAngle || 0;
-                    drawHalf(true, lAngle, 50);
-                    drawHalf(false, rAngle, 50);
-                }
-                
-                if (state.phase === 'SWIPING' && state.stressLevel > 0.7) {
-                    ctx.restore();
-                    ctx.strokeStyle = `rgba(255, 0, 0, ${(state.stressLevel - 0.7)*3})`;
-                    ctx.lineWidth = 15;
-                    ctx.strokeRect(0, 0, w, h);
-                    ctx.save();
-                    ctx.translate(cx, cy);
-                }
-                ctx.restore();
-                
-                if (state.leftTouchPos) {
-                    ctx.beginPath(); ctx.arc(state.leftTouchPos.x, state.leftTouchPos.y, 30, 0, Math.PI*2);
-                    ctx.fillStyle = 'rgba(52, 152, 219, 0.6)'; ctx.fill();
-                }
-                if (state.rightTouchPos) {
-                    ctx.beginPath(); ctx.arc(state.rightTouchPos.x, state.rightTouchPos.y, 30, 0, Math.PI*2);
-                    ctx.fillStyle = 'rgba(231, 76, 60, 0.6)'; ctx.fill();
+                    this.ui.stress.style.border = `0px solid rgba(255, 0, 0, 0)`;
                 }
             }
             
             updateUI(state) {
+                const ui = this.ui;
                 if (state.phase === 'IDLE') {
-                    this.ui.msg.textContent = "아래쪽 나무 막대를 각각 잡으세요\n(초콜릿 부분 터치 금지)";
-                    this.ui.btn.style.display = 'none';
-                    this.ui.debug.textContent = '';
-                    this.ui.msg.style.color = '#2c3e50';
+                    ui.msg.textContent = "아래쪽 나무 막대를 각각 잡으세요\n(초콜릿 부분 터치 금지)";
+                    ui.btn.style.display = 'none';
+                    ui.debug.textContent = '';
+                    ui.msg.style.color = '#2c3e50';
                 } else if (state.phase === 'READY') {
-                    this.ui.msg.textContent = "양쪽 화면 끝에 닿을 때까지 당기세요!";
+                    ui.msg.textContent = "양쪽 화면 끝에 닿을 때까지 당기세요!";
                 } else if (state.phase === 'SWIPING') {
-                    this.ui.msg.textContent = "";
+                    ui.msg.textContent = "";
                 } else if (state.phase === 'RESOLVE' && state.result && !state.result.isValid) {
-                    this.ui.msg.textContent = state.result.message;
-                    this.ui.msg.style.color = '#c0392b';
+                    ui.msg.textContent = state.result.message;
+                    ui.msg.style.color = '#c0392b';
                 } else if (state.phase === 'RESULT') {
                     if (state.result.isBroken) {
-                        this.ui.msg.textContent = `[실패] 막대가 부러졌습니다!\n순간적으로 너무 세게 당겼습니다.`;
-                        this.ui.msg.style.color = '#c0392b';
+                        ui.msg.textContent = `[실패] 막대가 부러졌습니다!\n순간적으로 너무 확 당겼습니다.`;
+                        ui.msg.style.color = '#c0392b';
                     } else {
-                        this.ui.msg.textContent = `[성공] 정확도 점수: ${state.result.symmetryScore}점\n왼쪽 ${state.result.leftRatio}% : 오른쪽 ${state.result.rightRatio}%`;
-                        this.ui.msg.style.color = '#2c3e50';
+                        ui.msg.textContent = `[성공] 정확도 점수: ${state.result.symmetryScore}점\n왼쪽 ${state.result.leftRatio}% : 오른쪽 ${state.result.rightRatio}%`;
+                        ui.msg.style.color = '#2c3e50';
                     }
                     
                     const m = state.result.metrics;
                     if(m) {
-                        this.ui.debug.innerHTML = `vL: ${m.vL.toFixed(2)} | vR: ${m.vR.toFixed(2)}<br>timeDiff: ${m.timeDiffMs.toFixed(0)}ms`;
+                        ui.debug.innerHTML = `vL: ${m.vL.toFixed(2)} | vR: ${m.vR.toFixed(2)}<br>timeDiff: ${m.timeDiffMs.toFixed(0)}ms`;
                     }
-                    this.ui.btn.style.display = 'block';
+                    ui.btn.style.display = 'block';
                 }
             }
         }
