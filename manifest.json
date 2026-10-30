@@ -3,8 +3,8 @@
   "short_name": "쌍쌍바",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#2c3e50",
-  "theme_color": "#2c3e50",
+  "background_color": "#fce4ec",
+  "theme_color": "#fce4ec",
   "icons": [
     {
       "src": "icon-192x192.png",
