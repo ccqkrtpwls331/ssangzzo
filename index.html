@@ -12,7 +12,6 @@
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #fce4ec; font-family: sans-serif; touch-action: none; user-select: none; overscroll-behavior: none; }
         canvas { display: block; width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1; }
         
-        /* UI 및 가이드라인 레이어 */
         #guide-left, #guide-right { position: absolute; top: 0; width: 20%; height: 100%; background: rgba(46, 204, 113, 0.15); pointer-events: none; z-index: 5; border-right: 2px dashed rgba(46, 204, 113, 0.4); display: flex; justify-content: center; align-items: flex-start; padding-top: 50px; color: rgba(46, 204, 113, 0.8); font-weight: bold; }
         #guide-right { right: 0; border-right: none; border-left: 2px dashed rgba(46, 204, 113, 0.4); }
         #guide-center { position: absolute; top: 0; left: 50%; width: 2px; height: 100%; border-left: 2px dashed rgba(0,0,0,0.15); pointer-events: none; z-index: 5; transform: translateX(-50%); }
@@ -21,7 +20,7 @@
         #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding-bottom: 80px; box-sizing: border-box; z-index: 10; }
         #message { font-size: 20px; font-weight: bold; margin-bottom: 20px; text-align: center; white-space: pre-wrap; line-height: 1.5; background: rgba(255, 255, 255, 0.95); padding: 15px 25px; border-radius: 12px; color: #2c3e50; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 90%; pointer-events: auto; }
         #debug-panel { position: absolute; top: 10px; left: 10px; font-size: 14px; font-family: monospace; color: #00ff00; text-align: left; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 5px; pointer-events: auto; }
-        #btn-retry { pointer-events: auto; padding: 12px 30px; font-size: 18px; font-weight: bold; background-color: #e74c3c; color: white; border: none; border-radius: 8px; cursor: pointer; display: none; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.1s; }
+        #btn-retry { pointer-events: auto; padding: 12px 30px; font-size: 18px; font-weight: bold; background-color: #e74c3c; color: white; border: none; border-radius: 8px; cursor: pointer; display: none; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.1s; z-index: 20; }
         #btn-retry:active { transform: translateY(2px); box-shadow: 0 2px 3px rgba(0,0,0,0.3); }
     </style>
 </head>
@@ -38,7 +37,6 @@
         <button id="btn-retry">다시 하기</button>
     </div>
 
-    <!-- Three.js CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
     <script>
@@ -128,7 +126,6 @@
                 this.updateDimensions();
                 window.addEventListener('resize', this.updateDimensions.bind(this));
                 
-                // 터치 이벤트는 투명한 ui-layer 영역 전체에서 잡습니다.
                 const touchArea = document.getElementById('ui-layer');
                 touchArea.addEventListener('touchstart', this.onTouchStart.bind(this), { passive: false });
                 touchArea.addEventListener('touchmove', this.onTouchMove.bind(this), { passive: false });
@@ -141,9 +138,13 @@
                 this.cy = window.innerHeight / 2 - 80; 
                 this.targetDist = this.midX * 0.8; 
             }
+
+            _shouldIgnore(e) {
+                return e.target && (e.target.id === 'btn-retry' || e.target.closest('#btn-retry'));
+            }
             
             onTouchStart(e) {
-                if(e.target.id === 'btn-retry') return; // 리트라이 버튼 클릭 방해 금지
+                if(this._shouldIgnore(e)) return;
                 e.preventDefault();
                 if (this.store.state.phase === 'RESULT' || this.store.state.phase === 'RESOLVE') return;
                 
@@ -172,13 +173,12 @@
                 }
                 
                 if (this.inputs.left && this.inputs.right && this.store.state.phase === 'IDLE') {
-                    this.store.update({
-                        phase: 'READY'
-                    });
+                    this.store.update({ phase: 'READY' });
                 }
             }
             
             onTouchMove(e) {
+                if(this._shouldIgnore(e)) return;
                 e.preventDefault();
                 if (this.store.state.phase !== 'READY' && this.store.state.phase !== 'SWIPING') return;
                 
@@ -217,7 +217,7 @@
                     const BREAK_V = 4.0;
                     if (vL > BREAK_V || vR > BREAK_V) realtimeSnap = true;
                     
-                    const lAngle = Math.min(dL / this.targetDist, 1.0) * (Math.PI / 6); // 최대 벌어짐 각도 30도
+                    const lAngle = Math.min(dL / this.targetDist, 1.0) * (Math.PI / 6);
                     const rAngle = Math.min(dR / this.targetDist, 1.0) * (Math.PI / 6);
                     
                     const stress = Math.min(1.0, Math.max(vL, vR) / BREAK_V);
@@ -232,6 +232,7 @@
             }
             
             onTouchEnd(e) {
+                if(this._shouldIgnore(e)) return;
                 e.preventDefault();
                 if (this.store.state.phase !== 'READY' && this.store.state.phase !== 'SWIPING') return;
                 
@@ -263,7 +264,6 @@
             }
         }
 
-        // --- 4. 3D 렌더러 (Three.js 연동) ---
         class RendererAdapter {
             constructor(store) {
                 this.store = store;
@@ -278,7 +278,6 @@
                 this.renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
                 
                 this.scene = new THREE.Scene();
-                // 카메라를 살짝 아래로 내려 아이스크림이 위쪽에 렌더링되게 함 (Y 오프셋 효과)
                 this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
                 this.camera.position.set(0, -1, 9);
                 
@@ -291,58 +290,50 @@
                 rimLight.position.set(-3, -2, -5);
                 this.scene.add(rimLight);
 
-                const chocMat = new THREE.MeshPhysicalMaterial({ color: 0x3B1E10, roughness: 0.35, metalness: 0.05, clearcoat: 0.15, clearcoatRoughness: 0.2 });
-                const woodMat = new THREE.MeshStandardMaterial({ color: 0xE8D5B5, roughness: 0.8 });
+                this.chocMat = new THREE.MeshPhysicalMaterial({ color: 0x3B1E10, roughness: 0.35, metalness: 0.05, clearcoat: 0.15, clearcoatRoughness: 0.2 });
+                this.woodMat = new THREE.MeshStandardMaterial({ color: 0xE8D5B5, roughness: 0.8 });
 
-                const extrudeSettings = { depth: 0.5, bevelEnabled: true, bevelSegments: 4, bevelSteps: 2, bevelSize: 0.08, bevelThickness: 0.08 };
+                this.extrudeSettings = { depth: 0.5, bevelEnabled: true, bevelSegments: 4, bevelSteps: 2, bevelSize: 0.08, bevelThickness: 0.08 };
 
-                // 정상 Shape
-                const shapeLeftNorm = new THREE.Shape();
-                shapeLeftNorm.moveTo(0, -1.8); shapeLeftNorm.lineTo(-0.6, -1.8); shapeLeftNorm.quadraticCurveTo(-0.9, -1.8, -0.9, -1.5); shapeLeftNorm.lineTo(-0.9, 1.5); shapeLeftNorm.quadraticCurveTo(-0.9, 1.8, -0.6, 1.8); shapeLeftNorm.lineTo(0, 1.8); shapeLeftNorm.lineTo(0, -1.8);
+                this.geoLeftNorm = this.createDynamicGeo(0, true);
+                this.geoRightNorm = this.createDynamicGeo(0, false);
 
-                const shapeRightNorm = new THREE.Shape();
-                shapeRightNorm.moveTo(0, -1.8); shapeRightNorm.lineTo(0, 1.8); shapeRightNorm.lineTo(0.6, 1.8); shapeRightNorm.quadraticCurveTo(0.9, 1.8, 0.9, 1.5); shapeRightNorm.lineTo(0.9, -1.5); shapeRightNorm.quadraticCurveTo(0.9, -1.8, 0.6, -1.8); shapeRightNorm.lineTo(0, -1.8);
-
-                // 파손(망함) Shape
                 const shapeLeftFail = new THREE.Shape();
                 shapeLeftFail.moveTo(0, -1.8); shapeLeftFail.lineTo(-0.6, -1.8); shapeLeftFail.quadraticCurveTo(-0.9, -1.8, -0.9, -1.5); shapeLeftFail.lineTo(-0.9, 1.5); shapeLeftFail.quadraticCurveTo(-0.9, 1.8, -0.6, 1.8); shapeLeftFail.lineTo(0.6, 1.8); shapeLeftFail.quadraticCurveTo(0.9, 1.8, 0.9, 1.5); shapeLeftFail.lineTo(0.9, 0.2); shapeLeftFail.lineTo(0.5, 0.0); shapeLeftFail.lineTo(0.3, -0.3); shapeLeftFail.lineTo(0.1, -0.6); shapeLeftFail.lineTo(0, -0.9); shapeLeftFail.lineTo(0, -1.8);
 
                 const shapeRightFail = new THREE.Shape();
                 shapeRightFail.moveTo(0, -1.8); shapeRightFail.lineTo(0, -0.9); shapeRightFail.lineTo(0.1, -0.6); shapeRightFail.lineTo(0.3, -0.3); shapeRightFail.lineTo(0.5, 0.0); shapeRightFail.lineTo(0.9, 0.2); shapeRightFail.lineTo(0.9, -1.5); shapeRightFail.quadraticCurveTo(0.9, -1.8, 0.6, -1.8); shapeRightFail.lineTo(0, -1.8);
 
-                this.geoLeftNorm = new THREE.ExtrudeGeometry(shapeLeftNorm, extrudeSettings);
-                this.geoRightNorm = new THREE.ExtrudeGeometry(shapeRightNorm, extrudeSettings);
-                this.geoLeftFail = new THREE.ExtrudeGeometry(shapeLeftFail, extrudeSettings);
-                this.geoRightFail = new THREE.ExtrudeGeometry(shapeRightFail, extrudeSettings);
+                this.geoLeftFail = new THREE.ExtrudeGeometry(shapeLeftFail, this.extrudeSettings);
+                this.geoRightFail = new THREE.ExtrudeGeometry(shapeRightFail, this.extrudeSettings);
 
-                [this.geoLeftNorm, this.geoRightNorm, this.geoLeftFail, this.geoRightFail].forEach(geo => geo.translate(0, 0, -0.25));
+                [this.geoLeftFail, this.geoRightFail].forEach(geo => geo.translate(0, 0, -0.25));
 
                 const stickGeo = new THREE.BoxGeometry(0.25, 1.5, 0.1);
                 stickGeo.translate(0, -0.75, 0);
 
-                // 하단(막대 부분)을 기준으로 벌어지도록 Pivot(회전축) 구조 생성
+                // 상단을 피벗(회전축)으로 설정하여 아래부터 쪼개지는 현실적인 모션 구현
                 this.leftPivot = new THREE.Group();
                 this.rightPivot = new THREE.Group();
                 this.scene.add(this.leftPivot);
                 this.scene.add(this.rightPivot);
                 
-                this.leftPivot.position.set(0, -1.8, 0); // 회전축 Y=-1.8 (막대기 시작점)
-                this.rightPivot.position.set(0, -1.8, 0);
+                this.leftPivot.position.set(0, 1.8, 0);
+                this.rightPivot.position.set(0, 1.8, 0);
 
                 this.leftGroup = new THREE.Group();
                 this.rightGroup = new THREE.Group();
-                // 피벗에서 원래 위치로 복귀시키기 위한 상단 오프셋
-                this.leftGroup.position.set(0, 1.8, 0);
-                this.rightGroup.position.set(0, 1.8, 0);
+                this.leftGroup.position.set(0, -1.8, 0);
+                this.rightGroup.position.set(0, -1.8, 0);
                 
                 this.leftPivot.add(this.leftGroup);
                 this.rightPivot.add(this.rightGroup);
 
-                this.leftChoc = new THREE.Mesh(this.geoLeftNorm, chocMat);
-                this.rightChoc = new THREE.Mesh(this.geoRightNorm, chocMat);
-                const leftStick = new THREE.Mesh(stickGeo, woodMat);
+                this.leftChoc = new THREE.Mesh(this.geoLeftNorm, this.chocMat);
+                this.rightChoc = new THREE.Mesh(this.geoRightNorm, this.chocMat);
+                const leftStick = new THREE.Mesh(stickGeo, this.woodMat);
                 leftStick.position.set(-0.45, -1.5, 0);
-                const rightStick = new THREE.Mesh(stickGeo, woodMat);
+                const rightStick = new THREE.Mesh(stickGeo, this.woodMat);
                 rightStick.position.set(0.45, -1.5, 0);
 
                 this.leftGroup.add(this.leftChoc);
@@ -352,9 +343,13 @@
 
                 this.resize();
                 window.addEventListener('resize', this.resize.bind(this));
-                this.ui.btn.addEventListener('click', () => this.store.reset());
                 
-                // 3D 렌더링 루프
+                // 버튼 클릭 이벤트를 명시적으로 리스닝
+                this.ui.btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.store.reset();
+                });
+                
                 const animate = () => {
                     requestAnimationFrame(animate);
                     this.renderer.render(this.scene, this.camera);
@@ -363,6 +358,18 @@
 
                 this.store.subscribe(this.renderState.bind(this));
                 this.renderState(this.store.state);
+            }
+
+            createDynamicGeo(cutX, isLeft) {
+                const shape = new THREE.Shape();
+                if (isLeft) {
+                    shape.moveTo(cutX, -1.8); shape.lineTo(-0.6, -1.8); shape.quadraticCurveTo(-0.9, -1.8, -0.9, -1.5); shape.lineTo(-0.9, 1.5); shape.quadraticCurveTo(-0.9, 1.8, -0.6, 1.8); shape.lineTo(cutX, 1.8); shape.lineTo(cutX, -1.8);
+                } else {
+                    shape.moveTo(cutX, -1.8); shape.lineTo(cutX, 1.8); shape.lineTo(0.6, 1.8); shape.quadraticCurveTo(0.9, 1.8, 0.9, 1.5); shape.lineTo(0.9, -1.5); shape.quadraticCurveTo(0.9, -1.8, 0.6, -1.8); shape.lineTo(cutX, -1.8);
+                }
+                const geo = new THREE.ExtrudeGeometry(shape, this.extrudeSettings);
+                geo.translate(0, 0, -0.25);
+                return geo;
             }
             
             resize() {
@@ -376,40 +383,40 @@
                 this.updateUI(state);
                 
                 if (state.phase === 'IDLE' || state.phase === 'READY') {
-                    this.leftChoc.geometry = this.geoLeftNorm;
-                    this.rightChoc.geometry = this.geoRightNorm;
-                    this.leftPivot.position.set(0, -1.8, 0);
+                    if(this.leftChoc.geometry !== this.geoLeftNorm) this.leftChoc.geometry = this.geoLeftNorm;
+                    if(this.rightChoc.geometry !== this.geoRightNorm) this.rightChoc.geometry = this.geoRightNorm;
+                    this.leftPivot.position.set(0, 1.8, 0);
                     this.leftPivot.rotation.set(0, 0, 0);
-                    this.rightPivot.position.set(0, -1.8, 0);
+                    this.rightPivot.position.set(0, 1.8, 0);
                     this.rightPivot.rotation.set(0, 0, 0);
                 } 
                 else if (state.phase === 'SWIPING') {
-                    this.leftChoc.geometry = this.geoLeftNorm;
-                    this.rightChoc.geometry = this.geoRightNorm;
-                    this.leftPivot.rotation.z = state.leftSpreadAngle || 0;
-                    this.rightPivot.rotation.z = -(state.rightSpreadAngle || 0);
+                    // 회전축이 상단이므로, 음수 회전(시계방향)이 하단을 왼쪽으로, 양수 회전이 오른쪽으로 밀어냄.
+                    this.leftPivot.rotation.z = -(state.leftSpreadAngle || 0);
+                    this.rightPivot.rotation.z = (state.rightSpreadAngle || 0);
                 } 
                 else if (state.phase === 'RESULT' && state.result) {
                     if (state.result.isBroken) {
                         this.leftChoc.geometry = this.geoLeftFail;
                         this.rightChoc.geometry = this.geoRightFail;
                         
-                        // 부러진 후에는 물리적으로 위치를 비틂
-                        if(state.result.brokenSide === 'LEFT' || state.result.brokenSide === 'BOTH') {
-                            this.leftPivot.position.set(-1.0, -1.5, 0);
-                            this.leftPivot.rotation.z = 0.2;
-                        }
-                        if(state.result.brokenSide === 'RIGHT' || state.result.brokenSide === 'BOTH') {
-                            this.rightPivot.position.set(0.8, -2.3, 0);
-                            this.rightPivot.rotation.z = -0.4;
-                        }
+                        // 부러진 후 조각들이 뜯겨져 나가는 연출
+                        this.leftPivot.position.set(-1.0, 1.8, 0);
+                        this.leftPivot.rotation.z = -0.3; 
+                        this.rightPivot.position.set(1.0, 0.5, 0);
+                        this.rightPivot.rotation.z = -1.0; 
                     } else {
-                        this.leftChoc.geometry = this.geoLeftNorm;
-                        this.rightChoc.geometry = this.geoRightNorm;
+                        // 결과 비율에 맞춰 3D 매쉬 동적 생성
+                        const cutX = (state.result.leftRatio / 100) * 1.8 - 0.9;
+                        const safeCutX = Math.max(-0.4, Math.min(0.4, cutX));
+                        this.leftChoc.geometry = this.createDynamicGeo(safeCutX, true);
+                        this.rightChoc.geometry = this.createDynamicGeo(safeCutX, false);
                         
-                        // 결과 비율에 따라 벌어짐 픽스
-                        this.leftPivot.rotation.z = 0.3;
-                        this.rightPivot.rotation.z = -0.3;
+                        // 성공적으로 쪼개진 후에는 서로 물리적으로 떨어짐
+                        this.leftPivot.position.set(-0.8, 1.8, 0);
+                        this.rightPivot.position.set(0.8, 1.8, 0);
+                        this.leftPivot.rotation.z = -0.1;
+                        this.rightPivot.rotation.z = 0.1;
                     }
                 }
                 
