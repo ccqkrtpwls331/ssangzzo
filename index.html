@@ -17,9 +17,15 @@
         #guide-center { position: absolute; top: 0; left: 50%; width: 2px; height: 100%; border-left: 2px dashed rgba(0,0,0,0.15); pointer-events: none; z-index: 5; transform: translateX(-50%); }
         #stress-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; box-sizing: border-box; pointer-events: none; z-index: 6; border: 0px solid rgba(255,0,0,0); }
         
-        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding-bottom: 80px; box-sizing: border-box; z-index: 10; }
+        /* 알림 메시지가 손가락에 가려지지 않도록 상단(15vh)으로 위치 변경 */
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: 15vh; box-sizing: border-box; z-index: 10; }
+        
         #message { font-size: 20px; font-weight: bold; margin-bottom: 20px; text-align: center; white-space: pre-wrap; line-height: 1.5; background: rgba(255, 255, 255, 0.95); padding: 15px 25px; border-radius: 12px; color: #2c3e50; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 90%; pointer-events: auto; }
         #debug-panel { position: absolute; top: 10px; left: 10px; font-size: 14px; font-family: monospace; color: #00ff00; text-align: left; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 5px; pointer-events: auto; }
+        
+        /* 최고 점수 표기 UI 추가 */
+        #best-score { position: absolute; top: 10px; right: 10px; font-size: 16px; font-weight: bold; color: #2c3e50; background: rgba(255,255,255,0.9); padding: 8px 12px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); pointer-events: auto; }
+
         #btn-retry { pointer-events: auto; padding: 12px 30px; font-size: 18px; font-weight: bold; background-color: #e74c3c; color: white; border: none; border-radius: 8px; cursor: pointer; display: none; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: transform 0.1s; z-index: 20; }
         #btn-retry:active { transform: translateY(2px); box-shadow: 0 2px 3px rgba(0,0,0,0.3); }
     </style>
@@ -33,6 +39,7 @@
     <canvas id="gameCanvas"></canvas>
     <div id="ui-layer">
         <div id="debug-panel"></div>
+        <div id="best-score">최고 점수: -</div>
         <div id="message">아래쪽 나무 막대를 각각 잡으세요\n(초콜릿 부분 터치 금지)</div>
         <button id="btn-retry">다시 하기</button>
     </div>
@@ -49,6 +56,9 @@
         const SplitMathEngine = {
             evaluate: function(leftInput, rightInput) {
                 const screenW = window.innerWidth;
+                
+                const dtL = Math.max(1, leftInput.t1 - leftInput.t0);
+                const dtR = Math.max(1, rightInput.t1 - rightInput.t0);
                 
                 const dxL = leftInput.x1 - leftInput.x0;
                 const dyL = leftInput.y1 - leftInput.y0;
@@ -278,22 +288,24 @@
 
             triggerAbnormalEnd(msg) {
                 this.store.update({ phase: 'RESOLVE', result: { isValid: false, message: msg } });
+                // 대기 시간 단축 (1500ms -> 700ms)
                 setTimeout(() => {
                     this.inputs = { left: null, right: null };
                     this.store.reset();
-                }, 1500);
+                }, 700);
             }
         }
 
-        // --- 4. 3D 렌더러 (A안: 테트리스 챔퍼 블록 조립형 & 결과 시점 입체 회전) ---
         class RendererAdapter {
             constructor(store) {
                 this.store = store;
+                this.bestScore = 0; // 최고 점수 상태 추가
                 this.ui = { 
                     msg: document.getElementById('message'), 
                     btn: document.getElementById('btn-retry'), 
                     debug: document.getElementById('debug-panel'),
-                    stress: document.getElementById('stress-overlay')
+                    stress: document.getElementById('stress-overlay'),
+                    bestScore: document.getElementById('best-score')
                 };
                 
                 const canvas = document.getElementById('gameCanvas');
@@ -303,7 +315,6 @@
                 this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
                 this.camera.position.set(0, -0.8, 9.5);
                 
-                // 3점 조명: 테트리스 블록의 각진 면(윗면/앞면/옆면) 명암 대비가 뚜렷하도록 세팅
                 const ambientLight = new THREE.AmbientLight(0xffffff, 0.55); 
                 this.scene.add(ambientLight);
                 const directionalLight = new THREE.DirectionalLight(0xffffff, 1.4); 
@@ -313,58 +324,31 @@
                 rimLight.position.set(-5, -3, -5);
                 this.scene.add(rimLight);
 
-                // FlatShading을 활성화하여 각진 챔퍼 모서리가 칼각으로 살아나도록 설정
                 this.chocMat = new THREE.MeshPhysicalMaterial({ 
-                    color: 0x4A2511, 
-                    roughness: 0.35, 
-                    metalness: 0.05, 
-                    clearcoat: 0.2, 
-                    clearcoatRoughness: 0.2,
-                    flatShading: true 
+                    color: 0x4A2511, roughness: 0.35, metalness: 0.05, 
+                    clearcoat: 0.2, clearcoatRoughness: 0.2, flatShading: true 
                 });
-                this.woodMat = new THREE.MeshStandardMaterial({ 
-                    color: 0xE8D5B5, 
-                    roughness: 0.8,
-                    flatShading: true
-                });
+                this.woodMat = new THREE.MeshStandardMaterial({ color: 0xE8D5B5, roughness: 0.8, flatShading: true });
 
-                // 1) 테트리스 스타일 단일 챔퍼(칼각 모따기) 블록 생성 (가로 0.9 x 세로 0.6 x 두께 0.8)
                 const bW = 0.78, bH = 0.48, bevel = 0.06;
                 const blockShape = new THREE.Shape();
-                blockShape.moveTo(-bW/2, -bH/2);
-                blockShape.lineTo(bW/2, -bH/2);
-                blockShape.lineTo(bW/2, bH/2);
-                blockShape.lineTo(-bW/2, bH/2);
-                blockShape.closePath();
+                blockShape.moveTo(-bW/2, -bH/2); blockShape.lineTo(bW/2, -bH/2);
+                blockShape.lineTo(bW/2, bH/2); blockShape.lineTo(-bW/2, bH/2); blockShape.closePath();
 
-                const blockExtrude = {
-                    depth: 0.68,
-                    bevelEnabled: true,
-                    bevelSegments: 1, // 둥근 곡선이 아닌 1단 45도 칼각 챔퍼
-                    steps: 1,
-                    bevelSize: bevel,
-                    bevelThickness: bevel
-                };
+                const blockExtrude = { depth: 0.68, bevelEnabled: true, bevelSegments: 1, steps: 1, bevelSize: bevel, bevelThickness: bevel };
                 this.unitBlockGeo = new THREE.ExtrudeGeometry(blockShape, blockExtrude);
                 this.unitBlockGeo.center();
                 this.unitBlockGeo.computeVertexNormals();
 
-                // 2) 나무 막대기 챔퍼 지오메트리
                 const sW = 0.22, sH = 1.4, sBevel = 0.03;
                 const stickShape = new THREE.Shape();
-                stickShape.moveTo(-sW/2, -sH/2);
-                stickShape.lineTo(sW/2, -sH/2);
-                stickShape.lineTo(sW/2, sH/2);
-                stickShape.lineTo(-sW/2, sH/2);
-                stickShape.closePath();
-                const stickGeo = new THREE.ExtrudeGeometry(stickShape, {
-                    depth: 0.12, bevelEnabled: true, bevelSegments: 1, steps: 1, bevelSize: sBevel, bevelThickness: sBevel
-                });
+                stickShape.moveTo(-sW/2, -sH/2); stickShape.lineTo(sW/2, -sH/2);
+                stickShape.lineTo(sW/2, sH/2); stickShape.lineTo(-sW/2, sH/2); stickShape.closePath();
+                const stickGeo = new THREE.ExtrudeGeometry(stickShape, { depth: 0.12, bevelEnabled: true, bevelSegments: 1, steps: 1, bevelSize: sBevel, bevelThickness: sBevel });
                 stickGeo.center();
                 stickGeo.translate(0, -sH/2, 0);
                 stickGeo.computeVertexNormals();
 
-                // 피벗 및 그룹 구조 생성
                 this.leftPivot = new THREE.Group();
                 this.rightPivot = new THREE.Group();
                 this.scene.add(this.leftPivot);
@@ -388,7 +372,6 @@
                 this.leftGroup.add(leftStick);
                 this.rightGroup.add(rightStick);
 
-                // 2열 x 6행 = 총 12개의 테트리스 블록 생성 (r=0: 맨 아래, r=5: 맨 위)
                 this.blocks = [];
                 for (let r = 0; r < 6; r++) {
                     const yPos = -1.5 + r * 0.6;
@@ -403,7 +386,6 @@
                     this.blocks.push({ r: r, meshL: meshL, meshR: meshR });
                 }
 
-                // 부드러운 3D 회전 애니메이션을 위한 타겟 상태값
                 this.targetL = { pos: new THREE.Vector3(0, 1.8, 0), rot: new THREE.Euler(0, 0, 0) };
                 this.targetR = { pos: new THREE.Vector3(0, 1.8, 0), rot: new THREE.Euler(0, 0, 0) };
 
@@ -417,7 +399,6 @@
                 
                 const animate = () => {
                     requestAnimationFrame(animate);
-                    // 피벗 위치 및 3D 입체 회전 보간 (Lerp)
                     this.leftPivot.position.lerp(this.targetL.pos, 0.15);
                     this.rightPivot.position.lerp(this.targetR.pos, 0.15);
 
@@ -437,7 +418,6 @@
                 this.renderState(this.store.state);
             }
 
-            // 결과 비율 및 대참사 여부에 따라 12개 블록의 소속(왼쪽 막대 vs 오른쪽 막대)을 직각/계단식으로 재배치
             assignBlocks(leftRatio, isBroken, brokenSide) {
                 for (let r = 0; r < 6; r++) {
                     const b = this.blocks[r];
@@ -445,14 +425,9 @@
                     let ownerR = 'RIGHT';
 
                     if (isBroken) {
-                        // 대참사: 한쪽 막대는 맨 아래 2칸만 남고, 반대쪽이 위쪽 4칸 전체를 'ㄱ'자 형태로 뜯어감
-                        if (brokenSide === 'LEFT') {
-                            if (r >= 2) ownerL = 'RIGHT';
-                        } else {
-                            if (r >= 2) ownerR = 'LEFT';
-                        }
+                        if (brokenSide === 'LEFT') { if (r >= 2) ownerL = 'RIGHT'; } 
+                        else { if (r >= 2) ownerR = 'LEFT'; }
                     } else {
-                        // 비율 불균형 시: 상단 블록부터 칸 단위로 계단식/직각 분리 (맨 아래 r=0은 항상 각자 막대에 고정)
                         const diff = leftRatio - 50; 
                         if (diff > 3) {
                             const stealCount = Math.min(4, Math.round(diff / 4.5));
@@ -483,14 +458,12 @@
                 
                 if (state.phase === 'IDLE' || state.phase === 'READY') {
                     this.assignBlocks(50, false, 'NONE');
-                    // 평소(조작 전)에는 정면 뷰 유지
                     this.targetL.pos.set(0, 1.8, 0);
                     this.targetL.rot.set(0, 0, 0);
                     this.targetR.pos.set(0, 1.8, 0);
                     this.targetR.rot.set(0, 0, 0);
                 } 
                 else if (state.phase === 'SWIPING') {
-                    // 당기는 중에는 정면에서 벌어짐 각도만 반영
                     this.targetL.pos.set(0, 1.8, 0);
                     this.targetL.rot.set(0, 0, -(state.leftSpreadAngle || 0));
                     this.targetR.pos.set(0, 1.8, 0);
@@ -499,14 +472,12 @@
                 else if (state.phase === 'RESULT' && state.result) {
                     if (state.result.isBroken) {
                         this.assignBlocks(0, true, state.result.brokenSide);
-                        // 쪼개지는 순간 X, Y축으로 회전하여 테트리스 블록의 윗면과 옆면 입체감을 동시에 노출
                         this.targetL.pos.set(-1.15, 1.7, 0);
                         this.targetL.rot.set(0.45, 0.55, -0.25); 
                         this.targetR.pos.set(1.15, 0.8, 0);
                         this.targetR.rot.set(0.45, -0.55, 0.65); 
                     } else {
                         this.assignBlocks(state.result.leftRatio, false, 'NONE');
-                        // 성공 시 양쪽으로 분리되면서 입체 각도(쿼터뷰 느낌)로 회전하여 단면과 두께를 보여줌
                         this.targetL.pos.set(-1.05, 1.8, 0);
                         this.targetL.rot.set(0.4, 0.5, -0.15);
                         this.targetR.pos.set(1.05, 1.8, 0);
@@ -537,6 +508,11 @@
                     ui.msg.textContent = state.result.message;
                     ui.msg.style.color = '#c0392b';
                 } else if (state.phase === 'RESULT') {
+                    if (!state.result.isBroken && state.result.symmetryScore > this.bestScore) {
+                        this.bestScore = state.result.symmetryScore;
+                        ui.bestScore.textContent = `최고 점수: ${this.bestScore}점`;
+                    }
+
                     if (state.result.isBroken) {
                         ui.msg.textContent = `[실패] 막대가 부러졌습니다!\n순간적으로 너무 확 당겼습니다.`;
                         ui.msg.style.color = '#c0392b';
