@@ -298,11 +298,31 @@
                 this.geoLeftNorm = this.createDynamicGeo(0, true);
                 this.geoRightNorm = this.createDynamicGeo(0, false);
 
+                // 첨부해주신 사진과 똑같은 형태의 대참사(L자 모양 뜯김) Shape 재현
                 const shapeLeftFail = new THREE.Shape();
-                shapeLeftFail.moveTo(0, -1.8); shapeLeftFail.lineTo(-0.6, -1.8); shapeLeftFail.quadraticCurveTo(-0.9, -1.8, -0.9, -1.5); shapeLeftFail.lineTo(-0.9, 1.5); shapeLeftFail.quadraticCurveTo(-0.9, 1.8, -0.6, 1.8); shapeLeftFail.lineTo(0.6, 1.8); shapeLeftFail.quadraticCurveTo(0.9, 1.8, 0.9, 1.5); shapeLeftFail.lineTo(0.9, 0.2); shapeLeftFail.lineTo(0.5, 0.0); shapeLeftFail.lineTo(0.3, -0.3); shapeLeftFail.lineTo(0.1, -0.6); shapeLeftFail.lineTo(0, -0.9); shapeLeftFail.lineTo(0, -1.8);
+                shapeLeftFail.moveTo(0, -1.8); 
+                shapeLeftFail.lineTo(-0.6, -1.8); 
+                shapeLeftFail.quadraticCurveTo(-0.9, -1.8, -0.9, -1.5); 
+                shapeLeftFail.lineTo(-0.9, 1.5); 
+                shapeLeftFail.quadraticCurveTo(-0.9, 1.8, -0.6, 1.8); 
+                shapeLeftFail.lineTo(0.6, 1.8); // 상단 전부 다 가져감
+                shapeLeftFail.quadraticCurveTo(0.9, 1.8, 0.9, 1.5); 
+                shapeLeftFail.lineTo(0.9, -0.2); 
+                // 거칠게 대각선으로 뜯겨진 중앙 파단면
+                shapeLeftFail.lineTo(0.5, 0.0); 
+                shapeLeftFail.lineTo(0.2, -0.4); 
+                shapeLeftFail.lineTo(0, -0.8); 
+                shapeLeftFail.lineTo(0, -1.8); // 하단 홈으로 귀결
 
                 const shapeRightFail = new THREE.Shape();
-                shapeRightFail.moveTo(0, -1.8); shapeRightFail.lineTo(0, -0.9); shapeRightFail.lineTo(0.1, -0.6); shapeRightFail.lineTo(0.3, -0.3); shapeRightFail.lineTo(0.5, 0.0); shapeRightFail.lineTo(0.9, 0.2); shapeRightFail.lineTo(0.9, -1.5); shapeRightFail.quadraticCurveTo(0.9, -1.8, 0.6, -1.8); shapeRightFail.lineTo(0, -1.8);
+                shapeRightFail.moveTo(0, -1.8); 
+                shapeRightFail.lineTo(0, -0.8); 
+                shapeRightFail.lineTo(0.2, -0.4); 
+                shapeRightFail.lineTo(0.5, 0.0); 
+                shapeRightFail.lineTo(0.9, -0.2); 
+                shapeRightFail.lineTo(0.9, -1.5); 
+                shapeRightFail.quadraticCurveTo(0.9, -1.8, 0.6, -1.8); 
+                shapeRightFail.lineTo(0, -1.8);
 
                 this.geoLeftFail = new THREE.ExtrudeGeometry(shapeLeftFail, this.extrudeSettings);
                 this.geoRightFail = new THREE.ExtrudeGeometry(shapeRightFail, this.extrudeSettings);
@@ -312,7 +332,6 @@
                 const stickGeo = new THREE.BoxGeometry(0.25, 1.5, 0.1);
                 stickGeo.translate(0, -0.75, 0);
 
-                // 상단을 피벗(회전축)으로 설정하여 아래부터 쪼개지는 현실적인 모션 구현
                 this.leftPivot = new THREE.Group();
                 this.rightPivot = new THREE.Group();
                 this.scene.add(this.leftPivot);
@@ -344,7 +363,6 @@
                 this.resize();
                 window.addEventListener('resize', this.resize.bind(this));
                 
-                // 버튼 클릭 이벤트를 명시적으로 리스닝
                 this.ui.btn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     this.store.reset();
@@ -360,12 +378,32 @@
                 this.renderState(this.store.state);
             }
 
-            createDynamicGeo(cutX, isLeft) {
+            // 개선된 동적 생성 함수: 하단 중앙 홈(0,-1.8)에서 사선으로 균열이 발생하도록 처리
+            createDynamicGeo(topCutX, isLeft) {
                 const shape = new THREE.Shape();
                 if (isLeft) {
-                    shape.moveTo(cutX, -1.8); shape.lineTo(-0.6, -1.8); shape.quadraticCurveTo(-0.9, -1.8, -0.9, -1.5); shape.lineTo(-0.9, 1.5); shape.quadraticCurveTo(-0.9, 1.8, -0.6, 1.8); shape.lineTo(cutX, 1.8); shape.lineTo(cutX, -1.8);
+                    shape.moveTo(0, -1.8); // 무조건 하단 중앙 홈에서 시작
+                    shape.lineTo(-0.6, -1.8); 
+                    shape.quadraticCurveTo(-0.9, -1.8, -0.9, -1.5); 
+                    shape.lineTo(-0.9, 1.5); 
+                    shape.quadraticCurveTo(-0.9, 1.8, -0.6, 1.8); 
+                    shape.lineTo(topCutX, 1.8); 
+                    // 중앙 홈으로 내려가는 사선 찢어짐 효과
+                    shape.lineTo(topCutX * 0.8, 0.8);
+                    shape.lineTo(topCutX * 0.4, 0.0);
+                    shape.lineTo(topCutX * 0.1, -0.8);
+                    shape.lineTo(0, -1.8);
                 } else {
-                    shape.moveTo(cutX, -1.8); shape.lineTo(cutX, 1.8); shape.lineTo(0.6, 1.8); shape.quadraticCurveTo(0.9, 1.8, 0.9, 1.5); shape.lineTo(0.9, -1.5); shape.quadraticCurveTo(0.9, -1.8, 0.6, -1.8); shape.lineTo(cutX, -1.8);
+                    shape.moveTo(0, -1.8); 
+                    shape.lineTo(topCutX * 0.1, -0.8);
+                    shape.lineTo(topCutX * 0.4, 0.0);
+                    shape.lineTo(topCutX * 0.8, 0.8);
+                    shape.lineTo(topCutX, 1.8); 
+                    shape.lineTo(0.6, 1.8); 
+                    shape.quadraticCurveTo(0.9, 1.8, 0.9, 1.5); 
+                    shape.lineTo(0.9, -1.5); 
+                    shape.quadraticCurveTo(0.9, -1.8, 0.6, -1.8); 
+                    shape.lineTo(0, -1.8);
                 }
                 const geo = new THREE.ExtrudeGeometry(shape, this.extrudeSettings);
                 geo.translate(0, 0, -0.25);
@@ -391,28 +429,27 @@
                     this.rightPivot.rotation.set(0, 0, 0);
                 } 
                 else if (state.phase === 'SWIPING') {
-                    // 회전축이 상단이므로, 음수 회전(시계방향)이 하단을 왼쪽으로, 양수 회전이 오른쪽으로 밀어냄.
                     this.leftPivot.rotation.z = -(state.leftSpreadAngle || 0);
                     this.rightPivot.rotation.z = (state.rightSpreadAngle || 0);
                 } 
                 else if (state.phase === 'RESULT' && state.result) {
                     if (state.result.isBroken) {
+                        // 대참사 파단면 적용
                         this.leftChoc.geometry = this.geoLeftFail;
                         this.rightChoc.geometry = this.geoRightFail;
                         
-                        // 부러진 후 조각들이 뜯겨져 나가는 연출
+                        // 부러진 후에는 물리적으로 불균형하게 비틀기
                         this.leftPivot.position.set(-1.0, 1.8, 0);
                         this.leftPivot.rotation.z = -0.3; 
                         this.rightPivot.position.set(1.0, 0.5, 0);
                         this.rightPivot.rotation.z = -1.0; 
                     } else {
-                        // 결과 비율에 맞춰 3D 매쉬 동적 생성
-                        const cutX = (state.result.leftRatio / 100) * 1.8 - 0.9;
-                        const safeCutX = Math.max(-0.4, Math.min(0.4, cutX));
+                        // 결과 비율에 맞춰 사선 찢어짐 동적 생성 (최대 ±0.6까지 기울어짐)
+                        const topCutX = ((state.result.leftRatio - 50) / 50) * 1.5;
+                        const safeCutX = Math.max(-0.6, Math.min(0.6, topCutX));
                         this.leftChoc.geometry = this.createDynamicGeo(safeCutX, true);
                         this.rightChoc.geometry = this.createDynamicGeo(safeCutX, false);
                         
-                        // 성공적으로 쪼개진 후에는 서로 물리적으로 떨어짐
                         this.leftPivot.position.set(-0.8, 1.8, 0);
                         this.rightPivot.position.set(0.8, 1.8, 0);
                         this.leftPivot.rotation.z = -0.1;
